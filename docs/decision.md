@@ -4,7 +4,9 @@
 
 ### GitHub-only agent workflow
 
-All implementation, review, deployment, and live testing runs through GitHub. Persistent local
+All implementation, review, deployment, and live testing runs through GitHub. Repository changes
+normally use dedicated branches and pull requests. Pull request review findings and follow-up
+discussion are recorded on the pull request, not only in chat or local state. Persistent local
 agent workspaces are not part of the architecture.
 
 ### Universal sign-in

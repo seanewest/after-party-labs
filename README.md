@@ -4,7 +4,11 @@ After Party is an exploratory testbed for a future Microsoft 365 and Azure cyber
 
 The `main` branch is configured to publish at <https://seanewest.github.io/after-party-labs/>. Pull requests are tested locally and are not deployed publicly.
 
-See [Local development](docs/local-development.md) to run the site and tests.
+## Documentation
+
+- [Run the site and tests locally](docs/local-development.md)
+- [Follow the broader development workflow](docs/development.md)
+- [Create, verify, or delete the multitenant application](docs/multitenant-application.md)
 
 ## Local Pages build
 
@@ -12,4 +16,4 @@ See [Local development](docs/local-development.md) to run the site and tests.
 npm run build:pages
 ```
 
-The generated site is written to `dist/`. See [`docs/development.md`](docs/development.md) for the broader development workflow.
+The generated site is written to `dist/`.

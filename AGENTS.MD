@@ -40,6 +40,8 @@ Repository changes should normally be developed on a dedicated branch and delive
 
 If an agent knows its assigned name, it should prefix every GitHub issue comment, pull request comment or review, and pull request title with `[NAME]` (for example, `[CORNHOLIO] ...`).
 
+When told to `check the board`, follow the dispatch loop in [docs/development.md](docs/development.md#checking-the-board) until no actionable owned work, review, or Ready issue remains.
+
 Most code will be written and reviewed by agents working on separate tasks. Leave enough context in issues, pull requests, review comments, tests, and documentation for another agent to understand the reasoning and continue the work independently.
 
 Implementation and review should normally be performed by separate agents. A reviewer should be able to understand the change from the repository, issue, pull request, tests, and evidence rather than relying on the implementer’s private context.
@@ -66,9 +68,7 @@ Ask for input when a decision meaningfully affects:
 
 When communicating with other agents, provide the technical detail they need.
 
-When communicating with the human, lead with the main idea. Keep the explanation clear and direct, with supporting details when they help with the decision.
-
-Human requests should state only the action and expected response. Put detailed technical context elsewhere unless the human genuinely needs it to perform the action.
+When communicating with the human, write like a person, not an agent status report. Lead with the point, use plain language, and include only the structure and detail that help the human understand or act. Put routine technical context elsewhere.
 
 ### Live environments and intentional insecurity
 

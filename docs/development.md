@@ -13,20 +13,14 @@ Implementation and review should normally be performed by separate agents.
 
 The human is part of the project's ongoing feedback loop, not merely an approver at the end.
 
-Issues, pull requests, and meaningful comments should make the main purpose and significance
-of the work easy for the human to understand. Technical detail should still be recorded for
-agents, but the human should not have to reconstruct the meaning of the work from it.
+Talk to the human like a person, not like an agent writing a status report. Lead with the point,
+use plain language, and add structure or technical detail only when it helps the human understand
+or act.
 
-Use judgment about what is worth surfacing. Communicate meaningful changes in understanding,
-tradeoffs, opportunities to simplify, or reasons the project may need to adjust direction.
-Routine implementation detail does not need to be elevated.
-
-Every pull request should leave behind a clear conceptual account of what the work
-accomplished and what it means for the larger project, alongside the technical record.
-
-Clear communication is part of engineering. When a change is difficult to explain simply,
-consider whether the underlying code, architecture, or product has become unnecessarily
-complicated.
+Surface meaningful changes in understanding, tradeoffs, and decisions. Keep routine mechanics in
+the issue or pull request. Pull requests and meaningful comments should briefly explain what
+changed, why it matters, and what evidence supports it; the human should not have to reconstruct
+the meaning from implementation details.
 
 ## Issues and pull requests
 
@@ -35,8 +29,6 @@ constraints that shaped it. They should leave room for the implementing agent to
 the details.
 
 Pull requests are the durable record of what was built, tested, and learned.
-
-Reviewers should complete the pull request lifecycle. When the current head has no blocking findings, required checks or evidence are satisfactory, and the pull request is mergeable, merge it instead of only approving it or reporting that it looks good. If draft status is the only obstacle, mark it ready and then merge it. Do not merge while a blocker, required validation, or human decision remains.
 
 When a task reveals a broader problem or a better direction, surface it rather than quietly
 expanding the task, ignoring the discovery, or following the original instruction after its
@@ -127,25 +119,92 @@ the Microsoft and platform integration, not serve as the main browser-developmen
 
 ## Work coordination
 
-Issues are the project's work queue, and a GitHub Project tracks their current status.
+Issues are the project's canonical work items. Each issue stays on the Development project through
+implementation and review. A pull request must link its issue, normally with `Closes #<number>`.
+The issue card is authoritative for ownership and status; the pull request records the change,
+validation, and review.
 
-Agent work begins from issues marked Ready. The human starts an agent task with the issue, and the agent
-records its progress and resulting pull request in GitHub.
+The project uses these statuses:
 
-When work requires human action or a decision, assign the issue to the human, move it to Waiting for
-Human, and leave a clear, concise request with an @mention. Do not make the human infer the required
-action from technical discussion.
+- **Backlog**: recognized work that is not ready to begin.
+- **Ready**: actionable work that an eligible agent may claim.
+- **In Progress**: the implementing agent has the next action.
+- **Waiting for Human**: progress requires a human decision or action.
+- **Review**: the linked pull request is ready for another agent to review.
+- **Done**: the work has been merged or otherwise completed.
 
-After the human responds, the issue should either return to Ready, continue through Review, or move to
-Done.
+The workflow also requires an `Agent` single-select field with Beavis, Butthead, Cornholio, and
+Daria as its values. It records the implementing agent, not the current reviewer. A Ready issue
+with no Agent may be claimed by any suitable agent; one with an Agent is reserved for that agent.
 
-The initial workflow is human-directed: agents do not automatically claim every Ready issue. Automatic
-task pickup may be introduced later if it improves the process without making coordination harder to
-understand.
+### Checking the board
 
-When an agent discovers something meaningful during the work, communicate it to the human in
-the active task conversation and also preserve it in the issue or pull request. The conversation
-supports the immediate feedback loop; GitHub is the durable record for other agents.
+When the human says `check the board`, run this loop in order until nothing is actionable:
+
+1. Resume owned unfinished work. Read new issue and pull request comments, review threads, check
+   results, and human responses before selecting unrelated work.
+2. If no owned item needs action, claim a suitable pull request in Review that was created by
+   another agent.
+3. If no review is available and there is no unmerged implementation pull request, claim the first
+   compatible Ready issue in board order.
+4. Otherwise stop and tell the human there is no actionable work.
+
+Run the loop again after an action changes an item's state, including after opening a pull request,
+completing a review, merging, receiving a human answer, or finishing requested changes. Agents do
+not poll continuously; once the loop is empty, wait for the human to say `check the board` again.
+
+### Claiming implementation work
+
+Before substantive work, confirm that the issue is still Ready and its Agent is blank or already
+set to you. Set the Agent to yourself, move the issue to In Progress, and leave a signed claim
+comment, for example:
+
+    [BEAVIS] Claimed for implementation. Beginning work now.
+
+If another agent has claimed or is reserved for the issue, continue the dispatch loop without
+working on it.
+
+An agent may have only one unmerged implementation pull request at a time. It may review another
+agent's work while its own pull request waits, but it may not claim another Ready issue until its
+pull request is merged, closed, or explicitly reassigned.
+
+### Pull requests and review
+
+When implementation and required validation are complete, the implementer links the pull request
+to the issue, marks the pull request ready, moves the issue to Review, and leaves a concise handoff:
+what changed, how it was tested, and anything the reviewer should pay attention to.
+
+An agent must not review its own implementation. Before reviewing another agent's pull request,
+leave a signed comment claiming the review. The Agent field remains set to the implementer.
+
+The reviewer completes one of these outcomes:
+
+- If the current head is satisfactory and the required checks and evidence are complete, merge the
+  pull request and move the issue to Done.
+- If implementation changes are needed, explain them clearly and move the issue to In Progress.
+- If a human decision or action is needed, explain it clearly and move the issue to Waiting for
+  Human.
+
+The original implementer handles requested changes and returns the issue to Review when it is
+ready. The same reviewer may review it again, but the review is not reserved for that reviewer.
+
+### Human attention
+
+Waiting for Human is only for work that cannot safely continue without a human decision or action;
+it is not a general approval stage. Address the human directly in a short, natural comment that
+says what is needed, why, your recommendation when there is a choice, and what will happen next.
+Do not turn the request into a form or a long agent report.
+
+The Agent remains the implementer. On the next board check, the agent reads the response, moves the
+issue to the appropriate status, and continues. The human does not need to update the project card.
+
+### Durable handoffs
+
+Because all agents may use the same GitHub account, important comments begin with the agent's name
+in brackets, for example `[DARIA]`.
+
+Project fields are authoritative for ownership and next action. Comments preserve the reasoning,
+evidence, questions, and handoff context behind status changes.
 
 ## Artifacts
 

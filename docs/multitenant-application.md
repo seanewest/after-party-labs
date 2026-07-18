@@ -2,7 +2,7 @@
 
 After Party uses a Microsoft Entra multitenant application as its shared sign-in and
 installation entry point. The lifecycle scripts below are pinned to the tested script commit
-[`bd931686cc7efcaacd42e26aa2b1ea37bcb43f29`](https://github.com/seanewest/after-party-labs/commit/bd931686cc7efcaacd42e26aa2b1ea37bcb43f29),
+[`d987aaa661a9f7faed0ffa7ebd1be1b8ea068a17`](https://github.com/seanewest/after-party-labs/commit/d987aaa661a9f7faed0ffa7ebd1be1b8ea068a17),
 so the downloaded contents do not change when the repository branch moves.
 
 ## Create the application
@@ -14,11 +14,11 @@ so the downloaded contents do not change when the repository branch moves.
    az account show --query '{tenantId:tenantId, subscription:name, user:user.name}' --output table
    ```
 
-3. Review the pinned [create script](https://github.com/seanewest/after-party-labs/blob/bd931686cc7efcaacd42e26aa2b1ea37bcb43f29/scripts/create-multitenant-app.sh),
+3. Review the pinned [create script](https://github.com/seanewest/after-party-labs/blob/d987aaa661a9f7faed0ffa7ebd1be1b8ea068a17/scripts/create-multitenant-app.sh),
    then paste this command into Cloud Shell:
 
    ```bash
-   bash <(curl -fsSL 'https://raw.githubusercontent.com/seanewest/after-party-labs/bd931686cc7efcaacd42e26aa2b1ea37bcb43f29/scripts/create-multitenant-app.sh')
+   bash <(curl -fsSL 'https://raw.githubusercontent.com/seanewest/after-party-labs/d987aaa661a9f7faed0ffa7ebd1be1b8ea068a17/scripts/create-multitenant-app.sh')
    ```
 
 The script creates and verifies the registration, then prints its Application (client) ID and
@@ -44,11 +44,11 @@ az ad app list --display-name 'After Party' --query '[].{name:displayName, clien
    identify the intended registration before continuing; the delete script deliberately does not
    select an application by name.
 
-4. Review the pinned [delete script](https://github.com/seanewest/after-party-labs/blob/bd931686cc7efcaacd42e26aa2b1ea37bcb43f29/scripts/delete-multitenant-app.sh),
+4. Review the pinned [delete script](https://github.com/seanewest/after-party-labs/blob/d987aaa661a9f7faed0ffa7ebd1be1b8ea068a17/scripts/delete-multitenant-app.sh),
    then paste this command into Cloud Shell:
 
    ```bash
-   bash <(curl -fsSL 'https://raw.githubusercontent.com/seanewest/after-party-labs/bd931686cc7efcaacd42e26aa2b1ea37bcb43f29/scripts/delete-multitenant-app.sh')
+   bash <(curl -fsSL 'https://raw.githubusercontent.com/seanewest/after-party-labs/d987aaa661a9f7faed0ffa7ebd1be1b8ea068a17/scripts/delete-multitenant-app.sh')
    ```
 
 The script asks for the Application (client) ID, displays the registration it found, requires

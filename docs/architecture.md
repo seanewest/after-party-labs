@@ -157,7 +157,7 @@ This should apply to:
 - infrastructure reconciliation;
 - baseline reconciliation;
 - scenario setup and cleanup;
-- manual end-to-end testing from a PR preview.
+- manual testing from a locally served development SPA.
 
 Mocked and offline tests do not need the live tenant lock.
 
@@ -178,7 +178,7 @@ The lock must cover the full operation, including:
 
 A crashed operation should eventually release the system through lease expiration.
 
-The lock is shared across the student's SPA, GitHub Actions, PR previews, and tenant-side jobs. It is not a central lock hosted by After Party.
+The lock is shared across the student's SPA, GitHub Actions, locally served development SPA, and tenant-side jobs. It is not a central lock hosted by After Party.
 
 ## State and token cache
 
@@ -267,22 +267,22 @@ If another PR previously changed the tenant, the new workflow reconciles it to t
 
 Only one PR can actively control the shared development tenant at a time.
 
-## PR previews
+## Local SPA testing
 
-A pull request may have its own GitHub Pages preview.
+Pull requests are built and served locally instead of publishing public preview deployments.
 
-The preview can be used for real end-to-end testing, but only when the tenant-side API is running the same commit.
+Local browser testing should be offline or mocked by default. It can be used for real end-to-end testing only when the tenant-side API is running the same commit.
 
 ```text
-preview commit equals API commit
+local SPA commit equals API commit
 → live actions allowed
 
-preview commit differs from API commit
+local SPA commit differs from API commit
 → live actions blocked
 → redeploy this PR before testing
 ```
 
-A stale preview must not silently operate against a different backend version.
+A locally served SPA must not silently operate against a different backend version. Modified or untracked local source must produce a non-matching dirty identity rather than claiming the clean `HEAD` commit.
 
 ## Version identity
 

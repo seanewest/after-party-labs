@@ -36,6 +36,8 @@ the details.
 
 Pull requests are the durable record of what was built, tested, and learned.
 
+Reviewers should complete the pull request lifecycle. When the current head has no blocking findings, required checks or evidence are satisfactory, and the pull request is mergeable, merge it instead of only approving it or reporting that it looks good. If draft status is the only obstacle, mark it ready and then merge it. Do not merge while a blocker, required validation, or human decision remains.
+
 When a task reveals a broader problem or a better direction, surface it rather than quietly
 expanding the task, ignoring the discovery, or following the original instruction after its
 assumptions no longer make sense.
@@ -79,13 +81,17 @@ behind.
 Persistent history such as audit logs, sign-in records, messages, and other accumulated
 evidence may remain. Only state the project intentionally manages should be reconciled.
 
-## Pull request previews and versioning
+## Local SPA testing and versioning
 
-Pull requests may publish GitHub Pages previews for manual end-to-end testing before merge.
+Pull requests are tested locally and do not publish public preview sites. See [Local development](local-development.md) for the command used to build and serve the SPA.
 
-A preview should only perform live actions when the tenant API and runtime are deployed from
-the same commit as the preview. Otherwise, it should clearly report that another version is
-currently active.
+The `GitHub Pages` workflow publishes the production site from `main` at:
+
+```text
+https://seanewest.github.io/after-party-labs/
+```
+
+The local server uses the same Pages build logic as production, with `/` as its base path. A worktree with modified or untracked files receives a `<commit>-dirty` identity that cannot match a deployed API commit. Local browser testing should remain offline or mocked unless the tenant-side API and runtime are deliberately deployed from the same clean commit and the operation follows the live-testing requirements below.
 
 Use the full Git commit SHA as the main identity of a development version.
 

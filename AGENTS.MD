@@ -42,6 +42,8 @@ Most code will be written and reviewed by agents working on separate tasks. Leav
 
 Implementation and review should normally be performed by separate agents. A reviewer should be able to understand the change from the repository, issue, pull request, tests, and evidence rather than relying on the implementer’s private context.
 
+If you are confident a pull request can be merged without issue, merge it instead of waiting for another instruction.
+
 A focused task should not quietly grow into a large redesign. When a task reveals a broader architectural problem, surface it clearly rather than either ignoring it or expanding the work without discussion.
 
 Use subagents when work can be divided into genuinely independent streams with little duplicated effort, coordination, or merge risk. Use judgment about whether the likely time saved justifies the additional usage; do not delegate merely to create parallel activity.

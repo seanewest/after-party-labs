@@ -1,0 +1,10 @@
+{
+  "name": "after-party-labs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:pages": "node scripts/build-pages.mjs --source site --output dist --commit local --base-path /after-party-labs/",
+    "dev": "node scripts/serve-pages.mjs",
+    "test": "node --test"
+  }
+}

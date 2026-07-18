@@ -96,15 +96,36 @@
 
   az ad app delete --id "$app_id" --only-show-errors
 
+  last_verification_error=''
   for _ in {1..15}; do
-    if ! az ad app show --id "$app_id" --only-show-errors >/dev/null 2>&1; then
-      printf 'Deleted and verified removal of app registration %s.\n' "$app_id"
-      printf 'Graph token expires: %s\n' "$token_expiry"
-      exit 0
+    if remaining_count="$(
+      az ad app list \
+        --app-id "$app_id" \
+        --query 'length(@)' \
+        --output tsv \
+        --only-show-errors 2>&1
+    )"; then
+      if [[ "$remaining_count" =~ ^[0-9]+$ ]]; then
+        last_verification_error=''
+        if (( remaining_count == 0 )); then
+          printf 'Deleted and verified removal of app registration %s.\n' "$app_id"
+          printf 'Graph token expires: %s\n' "$token_expiry"
+          exit 0
+        fi
+      else
+        last_verification_error="Azure CLI returned an unexpected count: $remaining_count"
+      fi
+    else
+      last_verification_error="$remaining_count"
     fi
     sleep 2
   done
 
-  echo "Deletion was requested, but app registration $app_id is still visible after 30 seconds." >&2
+  if [[ -n "$last_verification_error" ]]; then
+    echo "Deletion was requested, but removal could not be verified because the Azure query continued to fail." >&2
+    echo "Last verification error: $last_verification_error" >&2
+  else
+    echo "Deletion was requested, but app registration $app_id is still visible after 30 seconds." >&2
+  fi
   exit 1
 )

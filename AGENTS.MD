@@ -38,6 +38,8 @@ All implementation, coordination, review, and live validation should work throug
 
 Repository changes should normally be developed on a dedicated branch and delivered through a pull request. Review findings and follow-up discussion for a pull request must be recorded on that pull request, not only in chat or a local report.
 
+If an agent knows its assigned name, it should prefix every GitHub issue comment, pull request comment or review, and pull request title with `[NAME]` (for example, `[CORNHOLIO] ...`).
+
 Most code will be written and reviewed by agents working on separate tasks. Leave enough context in issues, pull requests, review comments, tests, and documentation for another agent to understand the reasoning and continue the work independently.
 
 Implementation and review should normally be performed by separate agents. A reviewer should be able to understand the change from the repository, issue, pull request, tests, and evidence rather than relying on the implementer’s private context.

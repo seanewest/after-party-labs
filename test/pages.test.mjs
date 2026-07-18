@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { promisify } from 'node:util';
 
 import { buildPages } from '../scripts/build-pages.mjs';
-import { createStaticServer } from '../scripts/serve-pages.mjs';
+import { createStaticServer, resolveSourceIdentity } from '../scripts/serve-pages.mjs';
+
+const executeFile = promisify(execFile);
 
 async function temporaryDirectory(t) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'after-party-pages-'));
@@ -38,6 +42,38 @@ test('buildPages stamps the exact commit and base path', async (t) => {
     JSON.parse(await readFile(path.join(output, 'version.json'), 'utf8')),
     { commit: 'abc123', basePath: '/after-party-labs/' },
   );
+});
+
+test('local source identity fails closed for modified and untracked files', async (t) => {
+  const repository = await temporaryDirectory(t);
+  const trackedFile = path.join(repository, 'site.html');
+  await executeFile('git', ['init'], { cwd: repository });
+  await writeFile(trackedFile, 'committed');
+  await executeFile('git', ['add', 'site.html'], { cwd: repository });
+  await executeFile(
+    'git',
+    [
+      '-c',
+      'user.name=Test',
+      '-c',
+      'user.email=test@example.com',
+      'commit',
+      '-m',
+      'Initial site',
+    ],
+    { cwd: repository },
+  );
+  const { stdout } = await executeFile('git', ['rev-parse', 'HEAD'], { cwd: repository });
+  const commit = stdout.trim();
+
+  assert.equal(await resolveSourceIdentity(repository), commit);
+
+  await writeFile(trackedFile, 'modified');
+  assert.equal(await resolveSourceIdentity(repository), `${commit}-dirty`);
+
+  await writeFile(trackedFile, 'committed');
+  await writeFile(path.join(repository, 'untracked.html'), 'untracked');
+  assert.equal(await resolveSourceIdentity(repository), `${commit}-dirty`);
 });
 
 test('the local server serves the generated site without caching it', async (t) => {

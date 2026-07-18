@@ -89,7 +89,7 @@ The `GitHub Pages` workflow publishes the production site from `main` at:
 https://seanewest.github.io/after-party-labs/
 ```
 
-The local server uses the same Pages build logic as production, with `/` as its base path. Local browser testing should remain offline or mocked unless the tenant-side API and runtime are deliberately deployed from the same commit and the operation follows the live-testing requirements below.
+The local server uses the same Pages build logic as production, with `/` as its base path. A worktree with modified or untracked files receives a `<commit>-dirty` identity that cannot match a deployed API commit. Local browser testing should remain offline or mocked unless the tenant-side API and runtime are deliberately deployed from the same clean commit and the operation follows the live-testing requirements below.
 
 Use the full Git commit SHA as the main identity of a development version.
 

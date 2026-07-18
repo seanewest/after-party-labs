@@ -20,12 +20,18 @@ const CONTENT_TYPES = new Map([
   ['.webp', 'image/webp'],
 ]);
 
-async function resolveCommit() {
+export async function resolveSourceIdentity(directory = process.cwd()) {
   try {
-    const { stdout } = await executeFile('git', ['rev-parse', 'HEAD']);
-    return stdout.trim();
+    const [{ stdout: commitOutput }, { stdout: statusOutput }] = await Promise.all([
+      executeFile('git', ['rev-parse', 'HEAD'], { cwd: directory }),
+      executeFile('git', ['status', '--porcelain=v1', '--untracked-files=all'], {
+        cwd: directory,
+      }),
+    ]);
+    const commit = commitOutput.trim();
+    return statusOutput.trim() ? `${commit}-dirty` : commit;
   } catch {
-    return 'local';
+    return 'unknown-dirty';
   }
 }
 
@@ -95,7 +101,7 @@ export async function servePages({
   await buildPages({
     source,
     output,
-    commit: await resolveCommit(),
+    commit: await resolveSourceIdentity(),
     basePath: '/',
   });
 

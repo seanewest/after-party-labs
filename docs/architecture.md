@@ -282,7 +282,7 @@ local SPA commit differs from API commit
 → redeploy this PR before testing
 ```
 
-A locally served SPA must not silently operate against a different backend version.
+A locally served SPA must not silently operate against a different backend version. Modified or untracked local source must produce a non-matching dirty identity rather than claiming the clean `HEAD` commit.
 
 ## Version identity
 

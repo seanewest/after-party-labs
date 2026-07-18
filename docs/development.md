@@ -36,6 +36,8 @@ the details.
 
 Pull requests are the durable record of what was built, tested, and learned.
 
+Reviewers should complete the pull request lifecycle. When the current head has no blocking findings, required checks or evidence are satisfactory, and the pull request is mergeable, merge it instead of only approving it or reporting that it looks good. If draft status is the only obstacle, mark it ready and then merge it. Do not merge while a blocker, required validation, or human decision remains.
+
 When a task reveals a broader problem or a better direction, surface it rather than quietly
 expanding the task, ignoring the discovery, or following the original instruction after its
 assumptions no longer make sense.

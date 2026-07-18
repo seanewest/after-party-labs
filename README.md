@@ -1,8 +1,10 @@
 # AFTER PARTY LABS
 
+[![CI](https://github.com/seanewest/after-party-labs/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/seanewest/after-party-labs/actions/workflows/ci.yml)
+
 After Party is an exploratory testbed for a future Microsoft 365 and Azure cybersecurity lab platform.
 
-The `main` branch is configured to publish at <https://seanewest.github.io/after-party-labs/>. Pull requests are tested locally and are not deployed publicly.
+[Check out the published site.](https://seanewest.github.io/after-party-labs/) The `main` branch publishes the site through GitHub Pages. Pull requests are tested locally and are not deployed publicly.
 
 ## Documentation
 

@@ -1,21 +1,28 @@
-# AFTER PARTY LABS
+# After Party Labs
 
 [![CI](https://github.com/seanewest/after-party-labs/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/seanewest/after-party-labs/actions/workflows/ci.yml)
 
-After Party is an exploratory testbed for a future Microsoft 365 and Azure cybersecurity lab platform.
+After Party is a future cybersecurity lab platform for Microsoft 365 and Azure. It is being built to let learners connect an isolated tenant, create realistic organizational activity and misconfigurations, and investigate what happened using Microsoft security tools.
 
-[Check out the published site.](https://seanewest.github.io/after-party-labs/) The `main` branch publishes the site through GitHub Pages. Pull requests are tested locally and are not deployed publicly.
+The project is under active development. [Visit the current website.](https://seanewest.github.io/after-party-labs/)
+
+## Run it locally
+
+With Node.js installed, there are no packages to install. From the repository root, run:
+
+```bash
+npm run dev
+```
+
+Open <http://127.0.0.1:4173/>. Run the test suite with `npm test`.
+
+See [Local development](docs/local-development.md) for ports, build behavior, and other details.
 
 ## Documentation
 
-- [Run the site and tests locally](docs/local-development.md)
-- [Follow the broader development workflow](docs/development.md)
+- [Product direction](docs/product.md)
+- [Architecture](docs/architecture.md)
+- [Local development](docs/local-development.md)
+- [Development and collaboration workflow](docs/development.md)
+- [Adopted decisions](docs/decision.md)
 - [Create, verify, or delete the multitenant application](docs/multitenant-application.md)
-
-## Local Pages build
-
-```bash
-npm run build:pages
-```
-
-The generated site is written to `dist/`.

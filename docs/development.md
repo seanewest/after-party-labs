@@ -79,13 +79,17 @@ behind.
 Persistent history such as audit logs, sign-in records, messages, and other accumulated
 evidence may remain. Only state the project intentionally manages should be reconciled.
 
-## Pull request previews and versioning
+## Local SPA testing and versioning
 
-Pull requests may publish GitHub Pages previews for manual end-to-end testing before merge.
+Pull requests are tested locally and do not publish public preview sites. See [Local development](local-development.md) for the command used to build and serve the SPA.
 
-A preview should only perform live actions when the tenant API and runtime are deployed from
-the same commit as the preview. Otherwise, it should clearly report that another version is
-currently active.
+The `GitHub Pages` workflow publishes the production site from `main` at:
+
+```text
+https://seanewest.github.io/after-party-labs/
+```
+
+The local server uses the same Pages build logic as production, with `/` as its base path. Local browser testing should remain offline or mocked unless the tenant-side API and runtime are deliberately deployed from the same commit and the operation follows the live-testing requirements below.
 
 Use the full Git commit SHA as the main identity of a development version.
 

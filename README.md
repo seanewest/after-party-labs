@@ -36,7 +36,17 @@ az ad app list --display-name 'After Party' --query '[].{name:displayName, clien
 
 1. Open [Azure Cloud Shell](https://shell.azure.com/) and select **Bash**.
 2. Confirm that Cloud Shell is signed into the app registration's home tenant.
-3. Review the pinned [delete script](https://github.com/seanewest/after-party-labs/blob/bd931686cc7efcaacd42e26aa2b1ea37bcb43f29/scripts/delete-multitenant-app.sh),
+3. List every matching registration and copy the Application (client) ID of the one to delete:
+
+   ```bash
+   az ad app list --display-name 'After Party' --query '[].{name:displayName, clientId:appId, created:createdDateTime, audience:signInAudience}' --output table
+   ```
+
+   Microsoft Entra permits duplicate display names. If the command returns more than one row,
+   identify the intended registration before continuing; the delete script deliberately does not
+   select an application by name.
+
+4. Review the pinned [delete script](https://github.com/seanewest/after-party-labs/blob/bd931686cc7efcaacd42e26aa2b1ea37bcb43f29/scripts/delete-multitenant-app.sh),
    then paste this command into Cloud Shell:
 
    ```bash

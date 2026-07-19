@@ -2,7 +2,9 @@
 
 After Party uses a Microsoft Entra multitenant application as its shared sign-in and
 installation entry point. This is the developer-owned application registration. A student's
-enterprise application is created later, in the student's tenant, when they approve After Party.
+first identity consent may create the corresponding enterprise application in the student's
+tenant. A later installation consent adds the reviewed lab-management permissions to that same
+enterprise application.
 
 The setup below creates only the developer registration. It does not create a client secret,
 certificate, service principal, or permission grant. The downloaded scripts are pinned to
@@ -53,8 +55,10 @@ only for an isolated lab tenant controlled by the student or developer. They are
 permissions: work is performed in the context of a signed-in user and remains limited by that
 user's access. They are not app-only permissions for unattended runtime jobs.
 
-Adding a permission to the developer registration does not grant it in a student tenant. The
-student installation flow must show the requested access and obtain the appropriate consent.
+Adding a permission to the developer registration does not grant it in a student tenant. Basic
+identity consent during sign-in may create the tenant's enterprise application, but it does not
+grant the broad permissions below. The student installation flow must show that requested access,
+obtain the appropriate consent, and verify the resulting grants.
 
 | Microsoft Graph permission | What After Party can explore |
 | --- | --- |

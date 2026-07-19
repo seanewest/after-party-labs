@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   shell-script-tests:
-    name: Shell script tests
+    name: Tests
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -24,5 +24,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: Run tests
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Run JavaScript tests
+        run: npm test
+
+      - name: Run shell script tests
         run: bash tests/shell-scripts.sh

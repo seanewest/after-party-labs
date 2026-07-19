@@ -27,3 +27,4 @@ See [Local development](docs/local-development.md) for ports, build behavior, an
 - [Development and collaboration workflow](docs/development.md)
 - [Adopted decisions](docs/decision.md)
 - [Create, verify, or delete the multitenant application](docs/multitenant-application.md)
+- [Tenant runtime bootstrap](docs/tenant-runtime.md)

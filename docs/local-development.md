@@ -40,5 +40,6 @@ PORT=8080 npm run dev
 npm test
 ```
 
-The tests run offline and cover Microsoft sign-in state, cancellation and account selection, Pages
-build metadata, and the local static server.
+The tests run offline and cover Microsoft sign-in and installation, tenant-runtime planning and
+verification, Pages build metadata, and the local static server. CI also compiles the Bicep runtime
+with the pinned Bicep CLI version.

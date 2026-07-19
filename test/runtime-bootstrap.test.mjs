@@ -102,6 +102,7 @@ function deploymentOutputs(overrides = {}) {
           type: 'String',
           value: `${resourceGroupId}/providers/Microsoft.Storage/storageAccounts/apstate/blobServices/default/containers/state`,
         },
+        tenantLockBlobPath: { type: 'String', value: 'locks/tenant-operation.json' },
         ...overrides,
       },
     },
@@ -275,6 +276,7 @@ test('a complete deployment is verified against the exact plan identity', () => 
   assert.equal(result.subscriptionId, subscriptionId);
   assert.equal(result.subscriptionName, 'Student Lab');
   assert.equal(result.commit, commit);
+  assert.equal(result.tenantLockBlobPath, 'locks/tenant-operation.json');
   assert.match(result.authConfigId, /authConfigs\/current$/);
   assert.match(result.apiUrl, /^https:/);
   assert.equal(Object.hasOwn(result, 'token'), false);
@@ -318,6 +320,16 @@ test('failed, partial, or mismatched deployments never report verified', () => {
       }),
     (error) => error.code === 'deployment_mismatch',
   );
+  assert.throws(
+    () =>
+      verifyRuntimeDeployment({
+        plan: plan(),
+        deployment: deploymentOutputs({
+          tenantLockBlobPath: { type: 'String', value: 'locks/another-lock.json' },
+        }),
+      }),
+    (error) => error.code === 'deployment_mismatch',
+  );
 });
 
 test('the Bicep runtime is minimal, passwordless, stateful, and versioned', async () => {
@@ -340,6 +352,7 @@ test('the Bicep runtime is minimal, passwordless, stateful, and versioned', asyn
   assert.match(runtime, /allowBlobPublicAccess: false/);
   assert.match(runtime, /Storage\/storageAccounts\/blobServices\/containers/);
   assert.match(runtime, /after-party-commit/);
+  assert.match(runtime, /AFTER_PARTY_TENANT_LOCK_BLOB.*locks\/tenant-operation\.json/);
   assert.match(runtime, /apiImage/);
   assert.match(runtime, /unauthenticatedClientAction: 'Return401'/);
   assert.match(runtime, /allowedApplications/);

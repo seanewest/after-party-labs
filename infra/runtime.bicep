@@ -148,6 +148,7 @@ resource api 'Microsoft.App/containerApps@2025-01-01' = {
             { name: 'AFTER_PARTY_COMMIT', value: commit }
             { name: 'AFTER_PARTY_STATE_ACCOUNT', value: stateStorage.name }
             { name: 'AFTER_PARTY_STATE_CONTAINER', value: stateContainer.name }
+            { name: 'AFTER_PARTY_TENANT_LOCK_BLOB', value: 'locks/tenant-operation.json' }
             { name: 'AZURE_CLIENT_ID', value: runtimeIdentity.properties.clientId }
           ]
           resources: {
@@ -214,3 +215,4 @@ output apiUrl string = 'https://${api.properties.configuration.ingress.fqdn}'
 output authConfigId string = apiAuthentication.id
 output identityId string = runtimeIdentity.id
 output stateContainerId string = stateContainer.id
+output tenantLockBlobPath string = 'locks/tenant-operation.json'

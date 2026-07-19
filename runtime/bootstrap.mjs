@@ -1,3 +1,5 @@
+import { TENANT_LOCK_BLOB_PATH } from './tenant-lock.mjs';
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/i;
 const IMAGE_DIGEST_PATTERN = /^[a-z0-9.-]+(?::[0-9]+)?\/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$/i;
@@ -322,6 +324,7 @@ export function verifyRuntimeDeployment({ plan, deployment }) {
   const authConfigId = outputValue(outputs, 'authConfigId');
   const identityId = outputValue(outputs, 'identityId');
   const stateContainerId = outputValue(outputs, 'stateContainerId');
+  const tenantLockBlobPath = outputValue(outputs, 'tenantLockBlobPath');
   const expectedResourceGroupId =
     `/subscriptions/${subscriptionId}/resourceGroups/${plan.deployment.parameters.resourceGroupName}`;
   const expectedApiId =
@@ -340,6 +343,7 @@ export function verifyRuntimeDeployment({ plan, deployment }) {
     apiId.toLowerCase() !== expectedApiId.toLowerCase() ||
     authConfigId.toLowerCase() !== expectedAuthConfigId.toLowerCase() ||
     identityId.toLowerCase() !== expectedIdentityId.toLowerCase() ||
+    tenantLockBlobPath !== TENANT_LOCK_BLOB_PATH ||
     stateContainerPath.length !== 5 ||
     !/^[a-z0-9]{3,24}$/.test(stateContainerPath[0]) ||
     stateContainerPath.slice(1).join('/') !== 'blobservices/default/containers/state' ||
@@ -362,5 +366,6 @@ export function verifyRuntimeDeployment({ plan, deployment }) {
     authConfigId,
     identityId,
     stateContainerId,
+    tenantLockBlobPath,
   });
 }

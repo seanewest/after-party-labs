@@ -20,11 +20,11 @@ reviewed commits so their contents do not change when the repository branch move
    az account show --query '{tenantId:tenantId, subscription:name, user:user.name}' --output table
    ```
 
-3. Review the pinned [create script](https://github.com/seanewest/after-party-labs/blob/3df0e58524fe933095187d3a4bda71b791fe9414/scripts/create-multitenant-app.sh),
+3. Review the pinned [create script](https://github.com/seanewest/after-party-labs/blob/4ec1f294d891d3bb9f0e23f02861fa0b4766fb83/scripts/create-multitenant-app.sh),
    then paste this command into Cloud Shell:
 
    ```bash
-   bash <(curl -fsSL 'https://raw.githubusercontent.com/seanewest/after-party-labs/3df0e58524fe933095187d3a4bda71b791fe9414/scripts/create-multitenant-app.sh')
+   bash <(curl -fsSL 'https://raw.githubusercontent.com/seanewest/after-party-labs/4ec1f294d891d3bb9f0e23f02861fa0b4766fb83/scripts/create-multitenant-app.sh')
    ```
 
 The script creates and verifies the registration, then prints its Application (client) ID and
@@ -41,7 +41,7 @@ signed-in tenant, then paste this exact-ID command into Cloud Shell:
 AFTER_PARTY_APP_ID='9edaa951-658e-4be2-9623-ee906cb604b2' \
 EXPECTED_TENANT_ID='92563293-315c-4b6c-9b90-bcb47ee8c970' \
 CONFIRM_RECONCILE='9edaa951-658e-4be2-9623-ee906cb604b2' \
-bash <(curl -fsSL 'https://raw.githubusercontent.com/seanewest/after-party-labs/3df0e58524fe933095187d3a4bda71b791fe9414/scripts/create-multitenant-app.sh')
+bash <(curl -fsSL 'https://raw.githubusercontent.com/seanewest/after-party-labs/4ec1f294d891d3bb9f0e23f02861fa0b4766fb83/scripts/create-multitenant-app.sh')
 ```
 
 The script refuses to reconcile by display name. Before changing anything, it verifies the home

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
 import { ensureDatabaseDirectory } from "./paths.ts";
-import { parseAgentName, type AgentName } from "./registry.ts";
+import { AGENT_NAMES, parseAgentName, type AgentName } from "./registry.ts";
 
 export type JsonValue =
   | null
@@ -24,6 +24,30 @@ export const MESSAGE_STATES = [
 ] as const;
 
 export type MessageState = (typeof MESSAGE_STATES)[number];
+
+export const WORKER_AVAILABILITIES = [
+  "unknown",
+  "idle",
+  "busy",
+  "asleep",
+  "unavailable",
+] as const;
+
+export type WorkerAvailability = (typeof WORKER_AVAILABILITIES)[number];
+
+export const ESCALATION_KINDS = [
+  "worker_unavailable",
+  "ambiguous_ownership",
+  "repeated_review_cycles",
+  "delivery_failure",
+  "manual",
+] as const;
+
+export type EscalationKind = (typeof ESCALATION_KINDS)[number];
+
+export const ESCALATION_STATUSES = ["open", "resolved"] as const;
+
+export type EscalationStatus = (typeof ESCALATION_STATUSES)[number];
 
 export interface EnqueueInput {
   id?: string;
@@ -83,6 +107,55 @@ export interface QueueInspection {
   message: QueueMessage;
   receipt: DeliveryReceipt | null;
   attempts: DeliveryAttempt[];
+}
+
+export interface WorkerRecord {
+  name: AgentName;
+  availability: WorkerAvailability;
+  reason: string | null;
+  observedAt: number;
+  updatedAt: number;
+}
+
+export interface SetWorkerAvailabilityOptions {
+  reason?: string;
+  observedAt?: number;
+}
+
+export interface CreateEscalationInput {
+  id?: string;
+  kind: EscalationKind;
+  requestedBy: AgentName | string;
+  summary: string;
+  subjectAgent?: AgentName | string;
+  messageId?: string;
+  details?: JsonValue;
+  dedupeKey?: string;
+  sourceUrl?: string;
+}
+
+export interface Escalation {
+  id: string;
+  kind: EscalationKind;
+  status: EscalationStatus;
+  requestedBy: AgentName;
+  subjectAgent: AgentName | null;
+  messageId: string | null;
+  summary: string;
+  details: JsonValue | null;
+  dedupeKey: string | null;
+  sourceUrl: string | null;
+  createdAt: number;
+  updatedAt: number;
+  resolvedAt: number | null;
+  resolution: string | null;
+}
+
+export interface ListEscalationOptions {
+  status?: EscalationStatus;
+  kind?: EscalationKind;
+  subjectAgent?: AgentName | string;
+  limit?: number;
 }
 
 export interface ClaimOptions {
@@ -145,6 +218,16 @@ const schema = `
   CREATE INDEX IF NOT EXISTS messages_recipient_state
     ON messages (recipient, state, available_at, created_at, id);
 
+  CREATE TABLE IF NOT EXISTS workers (
+    name TEXT PRIMARY KEY,
+    availability TEXT NOT NULL CHECK (availability IN (
+      'unknown', 'idle', 'busy', 'asleep', 'unavailable'
+    )),
+    reason TEXT,
+    observed_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  ) STRICT;
+
   CREATE TABLE IF NOT EXISTS delivery_receipts (
     message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
     recipient TEXT NOT NULL,
@@ -168,6 +251,31 @@ const schema = `
 
   CREATE INDEX IF NOT EXISTS delivery_attempts_message
     ON delivery_attempts (message_id, attempt_number);
+
+  CREATE TABLE IF NOT EXISTS escalations (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN (
+      'worker_unavailable', 'ambiguous_ownership', 'repeated_review_cycles',
+      'delivery_failure', 'manual'
+    )),
+    status TEXT NOT NULL CHECK (status IN ('open', 'resolved')),
+    requested_by TEXT NOT NULL,
+    subject_agent TEXT,
+    message_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+    summary TEXT NOT NULL,
+    details_json TEXT,
+    dedupe_key TEXT UNIQUE,
+    source_url TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    resolved_at INTEGER,
+    resolution TEXT
+  ) STRICT;
+
+  CREATE INDEX IF NOT EXISTS escalations_status_order
+    ON escalations (status, created_at, id);
+  CREATE INDEX IF NOT EXISTS escalations_subject_status
+    ON escalations (subject_agent, status, created_at, id);
 `;
 
 export class QueueError extends Error {}
@@ -179,6 +287,12 @@ export class MessageNotFoundError extends QueueError {
 }
 
 export class InvalidTransitionError extends QueueError {}
+
+export class EscalationNotFoundError extends QueueError {
+  constructor(id: string) {
+    super(`Escalation "${id}" does not exist.`);
+  }
+}
 
 export class DispatcherQueue {
   readonly databasePath: string;
@@ -192,6 +306,7 @@ export class DispatcherQueue {
     this.#database = new DatabaseSync(databasePath);
     this.#database.exec(schema);
     this.#now = options.now ?? Date.now;
+    this.#seedWorkers();
   }
 
   close(): void {
@@ -306,6 +421,177 @@ export class DispatcherQueue {
     return rows.map(mapMessage);
   }
 
+  getWorker(name: AgentName | string): WorkerRecord {
+    const agent = parseAgentName(name);
+    const row = this.#database
+      .prepare("SELECT * FROM workers WHERE name = ?")
+      .get(agent) as MessageRow | undefined;
+    if (!row) {
+      throw new QueueError(`Worker "${agent}" is missing from the durable registry.`);
+    }
+    return mapWorker(row);
+  }
+
+  listWorkers(): WorkerRecord[] {
+    const rows = this.#database
+      .prepare("SELECT * FROM workers ORDER BY name")
+      .all() as MessageRow[];
+    return rows.map(mapWorker);
+  }
+
+  setWorkerAvailability(
+    name: AgentName | string,
+    availability: WorkerAvailability,
+    options: SetWorkerAvailabilityOptions = {},
+  ): WorkerRecord {
+    const agent = parseAgentName(name);
+    if (!WORKER_AVAILABILITIES.includes(availability)) {
+      throw new QueueError(`Unknown worker availability "${availability}".`);
+    }
+    const reason = optionalNonEmpty(options.reason, "availability reason");
+    if (availability === "unavailable" && !reason) {
+      throw new QueueError("Unavailable workers require a reason.");
+    }
+    const now = this.#now();
+    const observedAt = options.observedAt ?? now;
+    if (!Number.isSafeInteger(observedAt) || observedAt < 0) {
+      throw new QueueError("Availability observation time must be a non-negative integer.");
+    }
+
+    this.#database
+      .prepare(`
+        UPDATE workers
+        SET availability = ?, reason = ?, observed_at = ?, updated_at = ?
+        WHERE name = ? AND observed_at <= ?
+      `)
+      .run(availability, reason, observedAt, now, agent, observedAt);
+    return this.getWorker(agent);
+  }
+
+  createEscalation(input: CreateEscalationInput): Escalation {
+    if (!ESCALATION_KINDS.includes(input.kind)) {
+      throw new QueueError(`Unknown escalation kind "${input.kind}".`);
+    }
+    const id = nonEmpty(input.id ?? randomUUID(), "escalation ID");
+    const requestedBy = parseAgentName(input.requestedBy);
+    const subjectAgent = input.subjectAgent
+      ? parseAgentName(input.subjectAgent)
+      : null;
+    if (input.kind === "worker_unavailable" && !subjectAgent) {
+      throw new QueueError("A worker_unavailable escalation requires a subject agent.");
+    }
+    const messageId = optionalNonEmpty(input.messageId, "message ID");
+    const summary = nonEmpty(input.summary, "escalation summary");
+    const detailsJson =
+      input.details === undefined
+        ? null
+        : serializeJson(input.details, "escalation details");
+    const dedupeKey = optionalNonEmpty(input.dedupeKey, "dedupe key");
+    const sourceUrl = optionalNonEmpty(input.sourceUrl, "source URL");
+    const now = this.#now();
+
+    return this.#transaction(() => {
+      if (dedupeKey) {
+        const existing = this.#database
+          .prepare("SELECT * FROM escalations WHERE dedupe_key = ?")
+          .get(dedupeKey) as MessageRow | undefined;
+        if (existing) {
+          return mapEscalation(existing);
+        }
+      }
+      if (messageId) {
+        this.#requireMessage(messageId);
+      }
+
+      this.#database
+        .prepare(`
+          INSERT INTO escalations (
+            id, kind, status, requested_by, subject_agent, message_id,
+            summary, details_json, dedupe_key, source_url, created_at, updated_at
+          ) VALUES (?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          id,
+          input.kind,
+          requestedBy,
+          subjectAgent,
+          messageId,
+          summary,
+          detailsJson,
+          dedupeKey,
+          sourceUrl,
+          now,
+          now,
+        );
+      return this.#requireEscalation(id);
+    });
+  }
+
+  getEscalation(id: string): Escalation | null {
+    const row = this.#database
+      .prepare("SELECT * FROM escalations WHERE id = ?")
+      .get(id) as MessageRow | undefined;
+    return row ? mapEscalation(row) : null;
+  }
+
+  listEscalations(options: ListEscalationOptions = {}): Escalation[] {
+    const clauses: string[] = [];
+    const values: SqlValue[] = [];
+    if (options.status) {
+      if (!ESCALATION_STATUSES.includes(options.status)) {
+        throw new QueueError(`Unknown escalation status "${options.status}".`);
+      }
+      clauses.push("status = ?");
+      values.push(options.status);
+    }
+    if (options.kind) {
+      if (!ESCALATION_KINDS.includes(options.kind)) {
+        throw new QueueError(`Unknown escalation kind "${options.kind}".`);
+      }
+      clauses.push("kind = ?");
+      values.push(options.kind);
+    }
+    if (options.subjectAgent) {
+      clauses.push("subject_agent = ?");
+      values.push(parseAgentName(options.subjectAgent));
+    }
+    const limit = options.limit ?? 100;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) {
+      throw new QueueError("Escalation list limit must be an integer between 1 and 1000.");
+    }
+    values.push(limit);
+
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = this.#database
+      .prepare(`
+        SELECT * FROM escalations
+        ${where}
+        ORDER BY created_at, id
+        LIMIT ?
+      `)
+      .all(...values) as MessageRow[];
+    return rows.map(mapEscalation);
+  }
+
+  resolveEscalation(id: string, resolution: string): Escalation {
+    const explanation = nonEmpty(resolution, "escalation resolution");
+    const now = this.#now();
+    return this.#transaction(() => {
+      const escalation = this.#requireEscalation(id);
+      if (escalation.status === "resolved") {
+        return escalation;
+      }
+      this.#database
+        .prepare(`
+          UPDATE escalations
+          SET status = 'resolved', updated_at = ?, resolved_at = ?, resolution = ?
+          WHERE id = ?
+        `)
+        .run(now, now, explanation, id);
+      return this.#requireEscalation(id);
+    });
+  }
+
   claimNext(options: ClaimOptions): QueueMessage | null {
     const consumer = nonEmpty(options.consumer, "consumer");
     const leaseMs = positiveInteger(options.leaseMs, "lease duration");
@@ -322,6 +608,9 @@ export class DispatcherQueue {
           WHERE state = 'queued'
             AND available_at <= ?
             AND (? IS NULL OR recipient = ?)
+            AND recipient NOT IN (
+              SELECT name FROM workers WHERE availability = 'unavailable'
+            )
           ORDER BY available_at, created_at, id
           LIMIT 1
         `)
@@ -541,12 +830,32 @@ export class DispatcherQueue {
     return Number(result.changes);
   }
 
+  #seedWorkers(): void {
+    const statement = this.#database.prepare(`
+      INSERT OR IGNORE INTO workers (
+        name, availability, reason, observed_at, updated_at
+      ) VALUES (?, 'unknown', NULL, 0, ?)
+    `);
+    const now = this.#now();
+    for (const name of AGENT_NAMES) {
+      statement.run(name, now);
+    }
+  }
+
   #requireMessage(id: string): QueueMessage {
     const message = this.getMessage(id);
     if (!message) {
       throw new MessageNotFoundError(id);
     }
     return message;
+  }
+
+  #requireEscalation(id: string): Escalation {
+    const escalation = this.getEscalation(id);
+    if (!escalation) {
+      throw new EscalationNotFoundError(id);
+    }
+    return escalation;
   }
 
   #requireOwnedInFlight(
@@ -650,6 +959,41 @@ function mapAttempt(row: MessageRow): DeliveryAttempt {
     finishedAt: nullableNumber(row.finished_at),
     outcome: row.outcome === null ? null : (String(row.outcome) as DeliveryAttemptOutcome),
     error: nullableString(row.error),
+  };
+}
+
+function mapWorker(row: MessageRow): WorkerRecord {
+  return {
+    name: parseAgentName(String(row.name)),
+    availability: String(row.availability) as WorkerAvailability,
+    reason: nullableString(row.reason),
+    observedAt: Number(row.observed_at),
+    updatedAt: Number(row.updated_at),
+  };
+}
+
+function mapEscalation(row: MessageRow): Escalation {
+  return {
+    id: String(row.id),
+    kind: String(row.kind) as EscalationKind,
+    status: String(row.status) as EscalationStatus,
+    requestedBy: parseAgentName(String(row.requested_by)),
+    subjectAgent:
+      row.subject_agent === null
+        ? null
+        : parseAgentName(String(row.subject_agent)),
+    messageId: nullableString(row.message_id),
+    summary: String(row.summary),
+    details:
+      row.details_json === null
+        ? null
+        : parseJson(String(row.details_json), "stored escalation details"),
+    dedupeKey: nullableString(row.dedupe_key),
+    sourceUrl: nullableString(row.source_url),
+    createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at),
+    resolvedAt: nullableNumber(row.resolved_at),
+    resolution: nullableString(row.resolution),
   };
 }
 

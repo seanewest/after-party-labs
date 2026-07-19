@@ -75,6 +75,62 @@ test("two CLI consumers racing for one message never both receive it", async () 
   }
 });
 
+test("the CLI reports worker unavailability and durable escalation state", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "after-party-cli-escalation-"));
+  const databasePath = join(directory, "queue.sqlite");
+  try {
+    const workers = await runCli(databasePath, "workers");
+    assert.match(workers.stdout, /beavis: unknown/);
+    assert.match(workers.stdout, /morpheus: unknown/);
+
+    const unavailable = await runCli(
+      databasePath,
+      "worker-state",
+      "beavis",
+      "unavailable",
+      "--reason",
+      "configured worktree is missing",
+    );
+    assert.match(
+      unavailable.stdout,
+      /beavis: unavailable — configured worktree is missing/,
+    );
+
+    const created = await runCli(
+      databasePath,
+      "escalate",
+      "--kind",
+      "worker_unavailable",
+      "--requested-by",
+      "morpheus",
+      "--subject-agent",
+      "beavis",
+      "--summary",
+      "Beavis cannot be resumed",
+      "--dedupe-key",
+      "cli:worker-unavailable:beavis",
+      "--json",
+    );
+    const escalation = JSON.parse(created.stdout) as { id: string; status: string };
+    assert.equal(escalation.status, "open");
+
+    const listed = await runCli(databasePath, "escalations", "--status", "open");
+    assert.match(listed.stdout, new RegExp(`open ${escalation.id} worker_unavailable for beavis`));
+
+    const resolved = await runCli(
+      databasePath,
+      "resolve-escalation",
+      escalation.id,
+      "--resolution",
+      "The worktree was restored",
+      "--json",
+    );
+    assert.equal((JSON.parse(resolved.stdout) as { status: string }).status, "resolved");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("the CLI rejects invalid worker identities", async () => {
   const directory = mkdtempSync(join(tmpdir(), "after-party-cli-invalid-"));
   const databasePath = join(directory, "queue.sqlite");

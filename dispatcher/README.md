@@ -22,10 +22,25 @@ Delivery errors move an in-flight message to `failed`; an explicit retry returns
 Expired `leased` or `delivering` messages return to `queued` automatically. Only `queued` and
 `failed` messages can be cancelled before a receipt arrives.
 
+## Worker and escalation boundary
+
+The same database holds one durable availability record for each named worker. The core recognizes
+`unknown`, `idle`, `busy`, `asleep`, and `unavailable`; it ignores stale observations and will not
+lease queued work to a worker currently marked `unavailable`. Task #36 owns observing real Codex
+sessions and updating these records.
+
+Escalations are durable, deduplicated records for worker unavailability, ambiguous ownership,
+repeated review cycles, delivery failures, or a manual intervention. They remain assigned
+conceptually to Morpheus without silently changing a Task's `Agent`. Task #37 may create them when
+GitHub routing cannot safely choose a recipient, while Task #36 may create them when a worker is
+genuinely unavailable.
+
 ## Extension points
 
 - A session runner calls `claimNext`, `beginDelivery`, `recordReceipt`, and `acknowledge`.
+- A session runner calls `setWorkerAvailability` with its independently observed lifecycle state.
 - A GitHub event source calls `enqueue` with a durable `dedupeKey` derived from the source event.
+- Either adapter calls `createEscalation`; Morpheus inspects and resolves the durable record.
 - Both adapters may create separate `DispatcherQueue` instances against the same SQLite file;
   `BEGIN IMMEDIATE` transactions and conditional state changes serialize competing consumers.
 

@@ -249,6 +249,156 @@ test("a durable recipient receipt suppresses retry after the queue process crash
   }
 });
 
+test("worker availability is durable, typed, and protected from stale observations", () => {
+  const state = fixture();
+  try {
+    const queue = new DispatcherQueue(state.databasePath, { now: state.now });
+    assert.deepEqual(
+      queue.listWorkers().map((worker) => [worker.name, worker.availability]),
+      [
+        ["beavis", "unknown"],
+        ["butthead", "unknown"],
+        ["cornholio", "unknown"],
+        ["daria", "unknown"],
+        ["morpheus", "unknown"],
+      ],
+    );
+    assert.throws(
+      () => queue.setWorkerAvailability("beavis", "unavailable"),
+      /require a reason/,
+    );
+    assert.equal(
+      queue.setWorkerAvailability("beavis", "busy", { observedAt: 900 }).availability,
+      "busy",
+    );
+    assert.equal(
+      queue.setWorkerAvailability("beavis", "asleep", { observedAt: 800 }).availability,
+      "busy",
+    );
+    assert.equal(
+      queue.setWorkerAvailability("beavis", "unavailable", {
+        observedAt: 1_000,
+        reason: "worktree was removed",
+      }).reason,
+      "worktree was removed",
+    );
+    queue.close();
+
+    const reopened = new DispatcherQueue(state.databasePath, { now: state.now });
+    assert.equal(reopened.getWorker("beavis").availability, "unavailable");
+    assert.equal(reopened.getWorker("beavis").reason, "worktree was removed");
+    reopened.close();
+  } finally {
+    state.cleanup();
+  }
+});
+
+test("unavailable workers retain queued work until a newer observation makes them eligible", () => {
+  const state = fixture();
+  try {
+    const queue = new DispatcherQueue(state.databasePath, { now: state.now });
+    const message = queue.enqueue({
+      sender: "morpheus",
+      recipient: "butthead",
+      payload: { text: "Wait safely" },
+    });
+    queue.setWorkerAvailability("butthead", "unavailable", {
+      reason: "configured worktree is missing",
+    });
+    assert.equal(queue.claimNext({ consumer: "runner-a", leaseMs: 100 }), null);
+    assert.equal(queue.getMessage(message.id)?.state, "queued");
+
+    state.setTime(1_100);
+    queue.setWorkerAvailability("butthead", "idle");
+    assert.equal(
+      queue.claimNext({ consumer: "runner-a", leaseMs: 100 })?.id,
+      message.id,
+    );
+    queue.close();
+  } finally {
+    state.cleanup();
+  }
+});
+
+test("escalations persist, deduplicate, filter, inspect, and resolve independently", () => {
+  const state = fixture();
+  try {
+    const first = new DispatcherQueue(state.databasePath, { now: state.now });
+    const message = first.enqueue({
+      sender: "daria",
+      recipient: "morpheus",
+      payload: { text: "Ambiguous owner" },
+    });
+    const escalation = first.createEscalation({
+      kind: "worker_unavailable",
+      requestedBy: "daria",
+      subjectAgent: "beavis",
+      messageId: message.id,
+      summary: "Beavis cannot resume the configured session",
+      details: { attempts: 3 },
+      dedupeKey: "worker-unavailable:beavis:session-1",
+      sourceUrl: "https://github.com/example/repo/issues/1",
+    });
+    const duplicate = first.createEscalation({
+      kind: "manual",
+      requestedBy: "cornholio",
+      summary: "This duplicate must not replace the original",
+      dedupeKey: "worker-unavailable:beavis:session-1",
+    });
+    assert.equal(duplicate.id, escalation.id);
+    first.close();
+
+    state.setTime(2_000);
+    const reopened = new DispatcherQueue(state.databasePath, { now: state.now });
+    assert.equal(reopened.getEscalation(escalation.id)?.status, "open");
+    assert.deepEqual(reopened.getEscalation(escalation.id)?.details, { attempts: 3 });
+    assert.equal(
+      reopened.listEscalations({ status: "open", subjectAgent: "beavis" }).length,
+      1,
+    );
+    const resolved = reopened.resolveEscalation(
+      escalation.id,
+      "The worktree was restored",
+    );
+    assert.equal(resolved.status, "resolved");
+    assert.equal(resolved.resolution, "The worktree was restored");
+    assert.equal(reopened.resolveEscalation(escalation.id, "ignored").resolution, "The worktree was restored");
+    assert.equal(reopened.listEscalations({ status: "open" }).length, 0);
+    reopened.close();
+  } finally {
+    state.cleanup();
+  }
+});
+
+test("escalation contracts reject incomplete unavailable-worker and message references", () => {
+  const state = fixture();
+  try {
+    const queue = new DispatcherQueue(state.databasePath, { now: state.now });
+    assert.throws(
+      () =>
+        queue.createEscalation({
+          kind: "worker_unavailable",
+          requestedBy: "morpheus",
+          summary: "Missing subject",
+        }),
+      /requires a subject agent/,
+    );
+    assert.throws(
+      () =>
+        queue.createEscalation({
+          kind: "delivery_failure",
+          requestedBy: "morpheus",
+          summary: "Unknown message",
+          messageId: "missing-message",
+        }),
+      /does not exist/,
+    );
+    queue.close();
+  } finally {
+    state.cleanup();
+  }
+});
+
 test("invalid owners and transitions fail closed", () => {
   const state = fixture();
   try {

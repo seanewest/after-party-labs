@@ -1,4 +1,5 @@
 const CONSENT_STATE_KEY = 'after-party.admin-consent';
+const VERIFICATION_STATE_KEY = 'after-party.installation-verification';
 const CONSENT_STATE_LIFETIME_MS = 10 * 60 * 1000;
 const MICROSOFT_GRAPH_APP_ID = '00000003-0000-0000-c000-000000000000';
 const BENIGN_IDENTITY_SCOPES = new Set(['openid', 'profile', 'email', 'offline_access']);
@@ -107,7 +108,7 @@ export function formatInstallationError(error) {
     consent_state_expired: 'The permission request expired. Start it again from this page.',
     tenant_mismatch: 'Microsoft returned a different tenant. Sign out and choose the intended tenant administrator.',
     account_mismatch: 'The permission response belongs to a different account. Sign out and try again.',
-    token_unavailable: 'Permission approval finished, but verification requires signing in again.',
+    token_unavailable: 'Microsoft could not refresh verification access. Select Approve lab permissions to retry.',
     verification_unauthorized: 'The signed-in account cannot verify the tenant installation. Use a tenant administrator.',
     graph_unavailable: 'Microsoft Graph could not verify the installation. Try again shortly.',
     enterprise_app_missing: 'After Party was not found in this tenant after approval. Try the approval again.',
@@ -157,6 +158,7 @@ export function createTenantInstallation({
     if (!accountId || !UUID_PATTERN.test(nonce)) {
       throw new InstallationError('configuration_invalid');
     }
+    storage.removeItem(VERIFICATION_STATE_KEY);
     storage.setItem(
       CONSENT_STATE_KEY,
       JSON.stringify({ accountId, createdAt: now(), nonce, tenantId }),
@@ -218,7 +220,58 @@ export function createTenantInstallation({
     if (returnedTenantId !== state.tenantId) {
       throw new InstallationError('tenant_mismatch');
     }
-    return { accountId: state.accountId, tenantId: state.tenantId };
+    const callback = { accountId: state.accountId, tenantId: state.tenantId };
+    storage.setItem(
+      VERIFICATION_STATE_KEY,
+      JSON.stringify({ ...callback, createdAt: now(), tokenRedirectAttempted: false }),
+    );
+    return callback;
+  }
+
+  function readVerificationState() {
+    const serializedState = storage.getItem(VERIFICATION_STATE_KEY);
+    if (!serializedState) {
+      return null;
+    }
+    let state;
+    try {
+      state = JSON.parse(serializedState);
+    } catch {
+      storage.removeItem(VERIFICATION_STATE_KEY);
+      throw new InstallationError('consent_state_mismatch');
+    }
+    const stateAge = now() - state.createdAt;
+    if (
+      !Number.isFinite(state.createdAt) ||
+      stateAge < 0 ||
+      stateAge > CONSENT_STATE_LIFETIME_MS
+    ) {
+      storage.removeItem(VERIFICATION_STATE_KEY);
+      throw new InstallationError('consent_state_expired');
+    }
+    return state;
+  }
+
+  function resumeCallback() {
+    const state = readVerificationState();
+    if (!state) {
+      return null;
+    }
+    return {
+      accountId: String(state.accountId || ''),
+      tenantId: requireUuid(state.tenantId, 'tenant_mismatch'),
+    };
+  }
+
+  function beginTokenRedirect() {
+    const state = readVerificationState();
+    if (!state || state.tokenRedirectAttempted) {
+      throw new InstallationError('token_unavailable');
+    }
+    storage.setItem(
+      VERIFICATION_STATE_KEY,
+      JSON.stringify({ ...state, tokenRedirectAttempted: true }),
+    );
   }
 
   async function verifyOnce({ accessToken, callback }) {
@@ -334,7 +387,9 @@ export function createTenantInstallation({
 
     for (let attempt = 1; attempt <= verificationAttempts; attempt += 1) {
       try {
-        return await verifyOnce({ accessToken, callback });
+        const result = await verifyOnce({ accessToken, callback });
+        storage.removeItem(VERIFICATION_STATE_KEY);
+        return result;
       } catch (error) {
         if (
           attempt === verificationAttempts ||
@@ -348,5 +403,5 @@ export function createTenantInstallation({
     throw new InstallationError('graph_unavailable');
   }
 
-  return { begin, consumeCallback, verify };
+  return { begin, beginTokenRedirect, consumeCallback, resumeCallback, verify };
 }

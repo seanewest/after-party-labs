@@ -56,6 +56,9 @@ function fakeMsal({ accounts = [], activeAccount = null, redirectResult = null }
       calls.push(['acquireTokenSilent', request]);
       return { accessToken: 'graph-access-token' };
     },
+    async acquireTokenRedirect(request) {
+      calls.push(['acquireTokenRedirect', request]);
+    },
   };
 
   return {
@@ -170,6 +173,26 @@ test('Graph tokens are acquired silently for the selected tenant and account', a
   assert.equal(await authentication.acquireGraphToken(['User.Read']), 'graph-access-token');
   assert.deepEqual(msal.calls.at(-1), [
     'acquireTokenSilent',
+    {
+      account: selected,
+      authority: `https://login.microsoftonline.com/${selected.tenantId}`,
+      scopes: ['User.Read'],
+    },
+  ]);
+});
+
+test('Graph token redirects preserve the selected tenant and account', async () => {
+  const selected = account({ tenantId: '33333333-3333-3333-3333-333333333333' });
+  const msal = fakeMsal({ accounts: [selected], activeAccount: selected });
+  const authentication = createAuthentication({
+    configuration,
+    createPublicClientApplication: msal.createPublicClientApplication,
+  });
+
+  await authentication.acquireGraphTokenRedirect(['User.Read']);
+
+  assert.deepEqual(msal.calls.at(-1), [
+    'acquireTokenRedirect',
     {
       account: selected,
       authority: `https://login.microsoftonline.com/${selected.tenantId}`,
@@ -314,6 +337,122 @@ test('the installation controller resumes consent for the same account and rende
       },
     },
     currentUrl: () => 'https://example.test/?admin_consent=True',
+  });
+
+  await controller.initialize();
+
+  assert.deepEqual(events, [
+    ['busy', true],
+    ['render', 'installed'],
+    ['busy', false],
+  ]);
+});
+
+test('the installation controller redirects for a newly approved Graph token without losing verification', async () => {
+  const selected = account({ tenantId: '33333333-3333-3333-3333-333333333333' });
+  const callback = {
+    accountId: selected.homeAccountId,
+    tenantId: selected.tenantId,
+  };
+  const events = [];
+  const authentication = {
+    getState() {
+      return { status: 'signed-in', account: selected };
+    },
+    async acquireGraphToken() {
+      throw { code: 'token_unavailable' };
+    },
+    async acquireGraphTokenRedirect(scopes) {
+      events.push(['redirect', scopes]);
+    },
+  };
+  const installation = {
+    consumeCallback() {
+      return callback;
+    },
+    beginTokenRedirect() {
+      events.push(['remember-redirect']);
+    },
+    resumeCallback() {
+      throw new Error('the fresh callback should be used');
+    },
+    async verify() {
+      throw new Error('verification must wait for the token redirect');
+    },
+  };
+  const controller = createInstallationController({
+    authentication,
+    installation,
+    scopes: ['User.Read'],
+    view: {
+      setInstallationBusy(value) {
+        events.push(['busy', value]);
+      },
+      renderInstallation() {
+        throw new Error('verification is not complete');
+      },
+      renderInstallationError(message) {
+        events.push(['error', message]);
+      },
+    },
+    currentUrl: () => 'https://example.test/?admin_consent=True',
+  });
+
+  await controller.initialize();
+
+  assert.deepEqual(events, [
+    ['busy', true],
+    ['remember-redirect'],
+    ['redirect', ['User.Read']],
+    ['busy', false],
+  ]);
+});
+
+test('the installation controller resumes verification after the Graph token redirect', async () => {
+  const selected = account({ tenantId: '33333333-3333-3333-3333-333333333333' });
+  const callback = {
+    accountId: selected.homeAccountId,
+    tenantId: selected.tenantId,
+  };
+  const events = [];
+  const controller = createInstallationController({
+    authentication: {
+      getState() {
+        return { status: 'signed-in', account: selected };
+      },
+      async acquireGraphToken() {
+        return 'redirected-access-token';
+      },
+    },
+    installation: {
+      consumeCallback() {
+        return null;
+      },
+      resumeCallback() {
+        return callback;
+      },
+      async verify(input) {
+        assert.deepEqual(input, {
+          account: selected,
+          accessToken: 'redirected-access-token',
+          callback,
+        });
+        return { status: 'installed', tenantId: selected.tenantId };
+      },
+    },
+    scopes: ['User.Read'],
+    view: {
+      setInstallationBusy(value) {
+        events.push(['busy', value]);
+      },
+      renderInstallation(state) {
+        events.push(['render', state.status]);
+      },
+      renderInstallationError(message) {
+        events.push(['error', message]);
+      },
+    },
+    currentUrl: () => 'https://example.test/',
   });
 
   await controller.initialize();

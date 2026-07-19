@@ -135,15 +135,46 @@ test('admin consent is tenant-specific, static, and protected by one-time state'
   assert.equal(url.searchParams.get('redirect_uri'), configuration.redirectUri);
   assert.equal(url.searchParams.get('state'), nonce);
 
-  assert.deepEqual(harness.installation.consumeCallback(consentCallback()), {
+  const callback = harness.installation.consumeCallback(consentCallback());
+  assert.deepEqual(callback, {
     accountId: account.homeAccountId,
     tenantId: studentTenantId,
   });
+  assert.deepEqual(harness.installation.resumeCallback(), callback);
   assert.deepEqual(harness.replacements, [configuration.redirectUri]);
   assert.throws(
     () => harness.installation.consumeCallback(consentCallback()),
     (error) => error.code === 'consent_state_missing',
   );
+});
+
+test('pending verification survives a token redirect and clears after successful verification', async () => {
+  const harness = createHarness({ responses: successfulResponses() });
+  harness.installation.begin(account);
+  const callback = harness.installation.consumeCallback(consentCallback());
+
+  assert.deepEqual(harness.installation.resumeCallback(), callback);
+  harness.installation.beginTokenRedirect();
+  assert.throws(
+    () => harness.installation.beginTokenRedirect(),
+    (error) => error.code === 'token_unavailable',
+  );
+  assert.deepEqual(harness.installation.resumeCallback(), callback);
+  assert.equal(
+    (await harness.installation.verify({
+      account,
+      accessToken: 'redirected-access-token',
+      callback: harness.installation.resumeCallback(),
+    })).status,
+    'installed',
+  );
+  assert.equal(harness.installation.resumeCallback(), null);
+});
+
+test('verification access errors do not contradict the active account state', () => {
+  const message = formatInstallationError({ code: 'token_unavailable' });
+  assert.doesNotMatch(message, /sign in/i);
+  assert.match(message, /Approve lab permissions/);
 });
 
 test('consent callbacks fail closed for mismatched state, tenant, expiry, and denial', () => {

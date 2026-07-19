@@ -55,7 +55,8 @@ export function createInstallationController({
   return {
     initialize: () =>
       run(async () => {
-        const callback = installation.consumeCallback(currentUrl());
+        const callback =
+          installation.consumeCallback(currentUrl()) ?? installation.resumeCallback();
         if (!callback) {
           return null;
         }
@@ -63,7 +64,17 @@ export function createInstallationController({
         if (authenticationState.status !== 'signed-in') {
           throw { code: 'account_mismatch' };
         }
-        const accessToken = await authentication.acquireGraphToken(scopes);
+        let accessToken;
+        try {
+          accessToken = await authentication.acquireGraphToken(scopes);
+        } catch (error) {
+          if (error?.code !== 'token_unavailable') {
+            throw error;
+          }
+          installation.beginTokenRedirect();
+          await authentication.acquireGraphTokenRedirect(scopes);
+          return null;
+        }
         return installation.verify({
           account: authenticationState.account,
           accessToken,

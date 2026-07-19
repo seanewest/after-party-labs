@@ -62,6 +62,10 @@ The later installation step sends the signed-in administrator to that tenant's M
 
 After consent, the SPA checks Microsoft Graph before reporting success. It requires exactly one service principal for the configured After Party client ID, with the expected developer tenant, display name, and `Application` type. It also requires the complete tenant-wide delegated permission grant and rejects app-only grants. Because newly consented objects can take a few seconds to appear in Microsoft Graph, the check retries briefly while otherwise failing closed on a wrong or duplicate object.
 
+If the newly approved Graph token is not available silently, the SPA lets MSAL complete token
+acquisition through its normal redirect and then resumes the pending verification. It keeps the
+selected account and does not ask the operator to start sign-in again.
+
 The signed-in operator can then use the SPA to:
 
 1. inspect the available Microsoft 365 and Azure environment;

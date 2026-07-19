@@ -92,9 +92,34 @@ function normalizeResult(result) {
   });
 }
 
-function errorMessage(error) {
-  return typeof error?.message === 'string' && error.message.trim() !== ''
-    ? error.message.trim()
+function normalizeFailureSummaries(failureSummaries) {
+  if (failureSummaries === undefined) {
+    return Object.freeze({});
+  }
+  if (!failureSummaries || typeof failureSummaries !== 'object' || Array.isArray(failureSummaries)) {
+    throw new TypeError('Experiment failure summaries must be an object keyed by failure code.');
+  }
+  return Object.freeze(
+    Object.fromEntries(
+      Object.entries(failureSummaries).map(([code, summary]) => {
+        if (!/^[a-z0-9]+(?:[_-][a-z0-9]+)*$/.test(code)) {
+          throw new TypeError('Experiment failure codes must use lowercase words.');
+        }
+        return [code, requiredText(summary, `Summary for experiment failure code ${code}`)];
+      }),
+    ),
+  );
+}
+
+function failureSummary(error, failureSummaries) {
+  let code = '';
+  try {
+    code = typeof error?.code === 'string' ? error.code : '';
+  } catch {
+    return 'The experiment did not complete.';
+  }
+  return Object.hasOwn(failureSummaries, code)
+    ? failureSummaries[code]
     : 'The experiment did not complete.';
 }
 
@@ -122,6 +147,7 @@ export function defineExperimentCard(definition) {
     availability: definition.availability ?? true,
     actionLabel: optionalText(definition.actionLabel, 'Experiment action label') ?? 'Run experiment',
     action: definition.action,
+    failureSummaries: normalizeFailureSummaries(definition.failureSummaries),
     errorGuidance: requiredText(definition.errorGuidance, 'Experiment error guidance'),
   });
 }
@@ -156,7 +182,7 @@ export function describeExperimentCard(card, state) {
           : state.status === 'blocked'
             ? state.reason
             : state.status === 'failure'
-              ? state.error
+              ? state.failureSummary
               : state.result.summary,
     guidance: ['blocked', 'failure'].includes(state.status) ? card.errorGuidance : undefined,
     actionLabel: card.actionLabel,
@@ -204,7 +230,10 @@ export function createExperimentCardController({ card, context = {}, render = ()
         const result = normalizeResult(await card.action(context));
         return publish({ status: 'success', result });
       } catch (error) {
-        return publish({ status: 'failure', error: errorMessage(error) });
+        return publish({
+          status: 'failure',
+          failureSummary: failureSummary(error, card.failureSummaries),
+        });
       } finally {
         pending = undefined;
       }

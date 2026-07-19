@@ -60,11 +60,20 @@ test('experiment definitions require the shared identity, access, effect, action
   assert.deepEqual(card.requirement, { kind: 'permission', label: 'Runtime.Status.Read' });
   assert.equal(card.effect, 'read');
   assert.equal(Object.isFrozen(card), true);
+  assert.equal(Object.isFrozen(card.failureSummaries), true);
   assert.throws(() => exampleCard({ id: 'Runtime Status' }), /lowercase kebab-case/);
   assert.throws(() => exampleCard({ requirement: undefined }), /permission or role/);
   assert.throws(() => exampleCard({ effect: 'unknown' }), /read or write/);
   assert.throws(() => exampleCard({ action: undefined }), /must be a function/);
   assert.throws(() => exampleCard({ errorGuidance: '' }), /non-empty string/);
+  assert.throws(
+    () => exampleCard({ failureSummaries: { 'Unsafe Code': 'Try again.' } }),
+    /lowercase words/,
+  );
+  assert.throws(
+    () => exampleCard({ failureSummaries: { runtime_timeout: '' } }),
+    /non-empty string/,
+  );
 });
 
 test('experiment view models explain read and write effects before an action runs', () => {
@@ -145,7 +154,7 @@ test('blocked experiments explain availability without invoking the action', asy
   assert.equal(renders.at(-1).actionDisabled, true);
 });
 
-test('failed experiments render concise errors and recovery guidance', async () => {
+test('failed experiments never render raw exception messages', async () => {
   const renders = [];
   const controller = createExperimentCardController({
     card: exampleCard({
@@ -159,9 +168,33 @@ test('failed experiments render concise errors and recovery guidance', async () 
   await controller.run();
 
   assert.equal(controller.getState().status, 'failure');
-  assert.equal(renders.at(-1).statusMessage, 'Runtime verification timed out.');
+  assert.equal(renders.at(-1).statusMessage, 'The experiment did not complete.');
+  assert.doesNotMatch(renders.at(-1).statusMessage, /Runtime verification timed out/);
   assert.equal(renders.at(-1).guidance, 'Reconnect the tenant and try again.');
   assert.equal(renders.at(-1).actionDisabled, false);
+});
+
+test('declared failure codes select explicit sanitized summaries', async () => {
+  const renders = [];
+  const controller = createExperimentCardController({
+    card: exampleCard({
+      failureSummaries: {
+        runtime_timeout: 'The runtime did not respond in time.',
+      },
+      action: async () => {
+        throw {
+          code: 'runtime_timeout',
+          message: 'Graph request for tenant secret-identifier timed out.',
+        };
+      },
+    }),
+    render: (model) => renders.push(model),
+  });
+
+  await controller.run();
+
+  assert.equal(renders.at(-1).statusMessage, 'The runtime did not respond in time.');
+  assert.doesNotMatch(renders.at(-1).statusMessage, /secret-identifier|Graph request/);
 });
 
 test('malformed operation results fail closed as a rendered failure', async () => {
@@ -174,7 +207,7 @@ test('malformed operation results fail closed as a rendered failure', async () =
   await controller.run();
 
   assert.equal(controller.getState().status, 'failure');
-  assert.match(renders.at(-1).statusMessage, /summary must be a non-empty string/);
+  assert.equal(renders.at(-1).statusMessage, 'The experiment did not complete.');
 });
 
 test('the shared DOM presentation renders state and result metadata below its action', async () => {

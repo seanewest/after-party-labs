@@ -186,6 +186,23 @@ function storageError() {
   return new TenantLockError('lock_storage_unavailable');
 }
 
+function waitForRenewalDelay(milliseconds, signal) {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(finish, milliseconds);
+    signal.addEventListener('abort', finish, { once: true });
+
+    function finish() {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', finish);
+      resolve();
+    }
+  });
+}
+
 export function formatTenantLockError(error) {
   const messages = {
     lock_request_invalid: 'The tenant operation lock request is invalid.',
@@ -252,6 +269,7 @@ export function createTenantOperationLock({
       let latest = record;
 
       return frozenObject({
+        renewAfterMilliseconds: Math.floor((duration * 1000) / 2),
         evidence: () => latest,
 
         async renew() {
@@ -311,17 +329,67 @@ export function createTenantOperationLock({
   });
 }
 
-export async function runWithTenantLock({ lock, operation, execute }) {
-  if (typeof lock?.acquire !== 'function' || typeof execute !== 'function') {
+export async function runWithTenantLock({
+  lock,
+  operation,
+  execute,
+  waitForRenewal = waitForRenewalDelay,
+}) {
+  if (
+    typeof lock?.acquire !== 'function' ||
+    typeof execute !== 'function' ||
+    typeof waitForRenewal !== 'function'
+  ) {
     throw new TypeError('A tenant lock and operation callback are required.');
   }
   const session = await lock.acquire(operation);
-  try {
-    const result = await execute({
+  if (!Number.isInteger(session.renewAfterMilliseconds) || session.renewAfterMilliseconds < 1) {
+    throw new TypeError('The tenant lock session must provide a renewal interval.');
+  }
+
+  const renewalController = new AbortController();
+  const executionController = new AbortController();
+  let renewalError;
+  const assertLockHeld = () => {
+    if (executionController.signal.aborted) {
+      throw executionController.signal.reason;
+    }
+  };
+  const renewalLoop = (async () => {
+    while (!renewalController.signal.aborted) {
+      await waitForRenewal(
+        session.renewAfterMilliseconds,
+        renewalController.signal,
+      );
+      if (renewalController.signal.aborted) {
+        return;
+      }
+      try {
+        await session.renew();
+      } catch (error) {
+        renewalError = error;
+        executionController.abort(error);
+        throw error;
+      }
+    }
+  })();
+  const execution = Promise.resolve().then(() =>
+    execute({
       operationId: session.evidence().owner.operationId,
       lockEvidence: session.evidence,
-      renewLock: session.renew,
-    });
+      signal: executionController.signal,
+      assertLockHeld,
+    }),
+  );
+
+  try {
+    const result = await Promise.race([
+      execution,
+      renewalLoop.then(() => new Promise(() => {})),
+    ]);
+    renewalController.abort();
+    await renewalLoop;
+    assertLockHeld();
     const held = session.evidence();
     const released = await session.release();
     return frozenObject({
@@ -331,12 +399,20 @@ export async function runWithTenantLock({ lock, operation, execute }) {
       lock: frozenObject({ held, released }),
     });
   } catch (error) {
+    renewalController.abort();
+    executionController.abort(error);
+    await renewalLoop.catch(() => {});
+    if (renewalError) {
+      // Do not detach work after ownership is lost. The operation must stop when
+      // its AbortSignal fires before this boundary returns the renewal failure.
+      await execution.catch(() => {});
+    }
     try {
       await session.release();
     } catch {
       // The original operation error remains the useful failure for the caller.
     }
-    throw error;
+    throw renewalError || error;
   }
 }
 

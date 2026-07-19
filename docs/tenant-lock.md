@@ -21,9 +21,11 @@ validate the operation identity
 ```
 
 The default lease lasts 30 seconds. Azure Blob Storage permits finite leases from 15 through 60
-seconds. A long operation receives the same renewal function from the shared runner; renewing resets
-the finite expiration window. If a process crashes, Azure expires the lease without requiring a
-second recovery service, and a later operation can acquire the same blob.
+seconds. The shared runner automatically renews halfway through each lease window for as long as the
+operation callback remains active. If renewal fails, the runner aborts the callback, waits for it to
+stop, and returns the lock failure; callbacks must observe the supplied `AbortSignal` and may call
+`assertLockHeld` immediately before a state change. If a process crashes, Azure expires the lease
+without requiring a second recovery service, and a later operation can acquire the same blob.
 
 The lease ID is an ownership secret. It remains inside the lock session and is sent only to Blob
 Storage for protected writes, renewal, and release. It is never written into the blob record or
@@ -69,10 +71,10 @@ the shared lock. For a repeatable contention check it may hold the lease for up 
 a second diagnostic attempts the same path; the bound remains shorter than the minimum Azure lease
 duration and the diagnostic does not change tenant state.
 
-Offline tests cover simultaneous acquisition, sanitized contention, renewal, release after success
-and failure, expiration after a simulated crash, stale-owner rejection, and the complete Blob REST
-request path. They exercise the same lock controller, storage adapter, and diagnostic that the
-deployed API will call.
+Offline tests cover simultaneous acquisition, sanitized contention, automatic renewal beyond the
+original lease window, abort on renewal loss, release after success and failure, expiration after a
+simulated crash, stale-owner rejection, and the complete Blob REST request path. They exercise the
+same lock controller, storage adapter, and diagnostic that the deployed API will call.
 
 ## Microsoft references
 

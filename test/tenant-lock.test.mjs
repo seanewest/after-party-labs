@@ -36,6 +36,7 @@ class MemoryLeaseStore {
   constructor(now) {
     this.now = now;
     this.entries = new Map();
+    this.renewalCount = 0;
   }
 
   active(key) {
@@ -61,6 +62,7 @@ class MemoryLeaseStore {
     if (!active || active.leaseId !== leaseId) {
       return { renewed: false };
     }
+    this.renewalCount += 1;
     this.entries.set(key, {
       leaseId,
       expiresAt: this.now() + leaseDurationSeconds * 1000,
@@ -77,6 +79,37 @@ class MemoryLeaseStore {
     this.entries.set(key, { leaseId: undefined, expiresAt: 0, record });
     return { released: true };
   }
+}
+
+function controlledRenewalWait() {
+  const pending = [];
+  const available = [];
+
+  return {
+    wait(milliseconds, signal) {
+      return new Promise((resolve) => {
+        const finish = () => {
+          signal.removeEventListener('abort', finish);
+          resolve();
+        };
+        const entry = { milliseconds, finish };
+        signal.addEventListener('abort', finish, { once: true });
+        const waiter = available.shift();
+        if (waiter) {
+          waiter(entry);
+        } else {
+          pending.push(entry);
+        }
+      });
+    },
+
+    next() {
+      const entry = pending.shift();
+      return entry
+        ? Promise.resolve(entry)
+        : new Promise((resolve) => available.push(resolve));
+    },
+  };
 }
 
 function lockFor(store, now, leaseId) {
@@ -159,6 +192,96 @@ test('renewal extends ownership and expiration recovers from a crashed operation
   await assert.rejects(first.renew(), (error) => error.code === 'lock_lost');
   await assert.rejects(first.release(), (error) => error.code === 'lock_lost');
   await recovered.release();
+});
+
+test('the shared boundary renews beyond one lease period and keeps a competitor blocked', async () => {
+  let currentTime = start;
+  const now = () => currentTime;
+  const store = new MemoryLeaseStore(now);
+  const renewal = controlledRenewalWait();
+  const firstLock = lockFor(store, now, '41414141-4141-4141-8141-414141414141');
+  const secondLock = lockFor(store, now, '42424242-4242-4242-8242-424242424242');
+  let operationStarted;
+  let finishOperation;
+  const started = new Promise((resolve) => {
+    operationStarted = resolve;
+  });
+  const finish = new Promise((resolve) => {
+    finishOperation = resolve;
+  });
+
+  const running = runWithTenantLock({
+    lock: firstLock,
+    operation: operation(operationA),
+    waitForRenewal: renewal.wait,
+    execute: async ({ signal, assertLockHeld }) => {
+      assert.equal(signal.aborted, false);
+      operationStarted();
+      await finish;
+      assertLockHeld();
+      return { state: 'operation-complete' };
+    },
+  });
+  await started;
+
+  const firstRenewal = await renewal.next();
+  assert.equal(firstRenewal.milliseconds, 15_000);
+  currentTime += firstRenewal.milliseconds;
+  firstRenewal.finish();
+  const secondRenewal = await renewal.next();
+  currentTime += secondRenewal.milliseconds;
+  secondRenewal.finish();
+  await renewal.next();
+  currentTime += 1_000;
+
+  assert.equal(store.renewalCount, 2);
+  await assert.rejects(
+    secondLock.acquire(operation(operationB)),
+    (error) => error.code === 'lock_busy' && error.evidence.owner.operationId === operationA,
+  );
+
+  finishOperation();
+  const completed = await running;
+  assert.equal(completed.state, 'succeeded');
+  assert.equal(completed.lock.held.renewedAt, '2026-07-19T12:00:30.000Z');
+  assert.equal(completed.lock.released.state, 'released');
+});
+
+test('renewal loss aborts active work before the shared boundary fails closed', async () => {
+  let currentTime = start;
+  const now = () => currentTime;
+  const store = new MemoryLeaseStore(now);
+  const renewal = controlledRenewalWait();
+  const lock = lockFor(store, now, '43434343-4343-4343-8343-434343434343');
+  let operationStarted;
+  const started = new Promise((resolve) => {
+    operationStarted = resolve;
+  });
+  let abortReason;
+
+  const running = runWithTenantLock({
+    lock,
+    operation: operation(operationA),
+    waitForRenewal: renewal.wait,
+    execute: async ({ signal }) => {
+      operationStarted();
+      await new Promise((resolve, reject) => {
+        signal.addEventListener('abort', () => {
+          abortReason = signal.reason;
+          reject(signal.reason);
+        }, { once: true });
+      });
+    },
+  });
+  await started;
+
+  const renewalAttempt = await renewal.next();
+  currentTime += 31_000;
+  renewalAttempt.finish();
+
+  await assert.rejects(running, (error) => error.code === 'lock_lost');
+  assert.equal(abortReason.code, 'lock_lost');
+  assert.equal(abortReason.evidence.action, 'renew');
 });
 
 test('the diagnostic uses the shared operation boundary and is blocked by real work', async () => {

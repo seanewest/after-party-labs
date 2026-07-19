@@ -143,15 +143,25 @@ The project uses these statuses:
 - **Ready**: an actionable Task that an eligible agent may claim.
 - **In Progress**: a Task's implementing agent has the next action, or an approved Story has been
   divided into Tasks and work on its outcome is underway.
-- **Waiting for Human**: progress requires a human decision or action.
-- **Review**: a Task's linked pull request is ready for another agent to review.
-- **Done**: a Task has been merged or otherwise completed, or a Story's required Tasks and overall
-  acceptance criteria are complete.
+- **Waiting for Human**: a Task requires a human decision or action, or a Story is ready for human
+  acceptance against `main` or the deployed application.
+- **Review**: a Task's linked pull request needs agent review, or failed human acceptance of a Story
+  needs agent triage into Tasks.
+- **Done**: a Task has been merged or otherwise completed, or the human has explicitly accepted a
+  Story.
 
 A Story starts in Backlog, moves to In Progress once it is approved and divided into Tasks, and
-moves to Done only after its required Tasks and acceptance criteria are complete. Use Waiting for
-Human only when the Story as a whole cannot progress without human action. Stories never use Ready
-or Review.
+moves to Waiting for Human after its required Tasks are Done and its acceptance target is available
+from `main`. Leave a signed comment with the URL or manual action, deployed commit when relevant,
+and concise verification steps. Move the Story to Done and close it only after the human explicitly
+confirms acceptance.
+
+If human acceptance fails, record the reason on the Story and move it to Review. Review means the
+feedback needs agent triage, not that the Story itself is claimed: create or reopen the required
+Tasks, move the Story back to In Progress, and leave its Agent blank. Stories never use Ready.
+
+Until pull request previews exist, merge satisfactory Task pull requests normally and perform Story
+acceptance afterward against `main` or the deployed application.
 
 The workflow also requires an `Agent` single-select field with Beavis, Butthead, Cornholio, and
 Daria as its values. It records the Task's implementing agent, not the current reviewer. A Ready
@@ -164,11 +174,18 @@ When the human says `check the board`, run this loop in order until nothing is a
 
 1. Resume owned unfinished work. Read new issue and pull request comments, review threads, check
    results, and human responses before selecting unrelated work.
-2. If no owned item needs action, claim a suitable pull request in Review that was created by
+2. Reconcile Stories affected by Task state changes or human responses. A Story in Review has
+   acceptance feedback to turn into new or reopened Tasks; it is not claimed for implementation.
+3. If no owned item needs action, claim a suitable Task pull request in Review that was created by
    another agent.
-3. If no review is available and there is no active implementation Task, claim the first compatible
+4. If no review is available and there is no active implementation Task, claim the first compatible
    Ready Task in board order. Ignore Stories and items without a Work Type.
-4. Otherwise stop and tell the human there is no actionable work.
+5. Otherwise stop and tell the human there is no actionable work.
+
+Whenever an agent changes a Task's state, that agent reconciles its direct parent Story before
+continuing the loop. Keep the Story In Progress while required Tasks remain. After the final required
+Task is Done and the acceptance target is available, move the Story to Waiting for Human. A human
+acceptance failure moves it to Review; an explicit human confirmation moves it to Done.
 
 Run the loop again after an action changes an item's state, including after opening a pull request,
 completing a review, merging, receiving a human answer, or finishing requested changes. Agents do
@@ -210,8 +227,9 @@ The reviewer completes one of these outcomes:
 The original implementer handles requested changes and returns the Task to Review when it is
 ready. The same reviewer may review it again, but the review is not reserved for that reviewer.
 
-Merging a Task's pull request completes that Task, not its parent Story. Close the Story only after
-all required Tasks are Done and the Story's acceptance criteria have been checked.
+Merging a Task's pull request completes that Task, not its parent Story. Reconcile the parent Story,
+but close it only after all required Tasks are Done and the human explicitly confirms its acceptance
+criteria.
 
 ### Human attention
 
@@ -220,8 +238,9 @@ it is not a general approval stage. Address the human directly in a short, natur
 says what is needed, why, your recommendation when there is a choice, and what will happen next.
 Do not turn the request into a form or a long agent report.
 
-The Agent remains the implementer. On the next board check, the agent reads the response, moves the
-issue to the appropriate status, and continues. The human does not need to update the project card.
+The Agent remains the implementer for a Task and blank for a Story. On the next board check, the
+agent reads the response, moves the issue to the appropriate status, and continues. The human does
+not need to update the project card.
 
 ### Durable handoffs
 

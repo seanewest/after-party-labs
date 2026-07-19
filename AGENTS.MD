@@ -40,7 +40,7 @@ Repository changes should normally be developed on a dedicated branch and delive
 
 If an agent knows its assigned name, it should prefix every GitHub issue comment, pull request comment or review, and pull request title with `[NAME]` (for example, `[CORNHOLIO] ...`).
 
-When told to `check the board`, follow the dispatch loop in [docs/development.md](docs/development.md#checking-the-board) until no actionable owned Task, review, or Ready Task remains. Stories are never claimed for implementation.
+When told to `check the board`, follow the dispatch loop in [docs/development.md](docs/development.md#checking-the-board) until no actionable owned Task, Story reconciliation, review, or Ready Task remains. Stories are never claimed for implementation. Whenever a Task changes state, reconcile its parent Story before continuing.
 
 Only work represented by an issue card on the project board is eligible for this dispatch loop. Ignore issues without a card and pull requests without a linked board issue unless the human explicitly asks you to act on them.
 

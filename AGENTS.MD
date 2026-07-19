@@ -48,6 +48,8 @@ For Tasks, Original Agent is the sticky creator of the first implementation pull
 
 Whenever a Task's Status or Current Agent changes, leave a concise signed comment on the Task stating what finished, the relevant pull request and current head when applicable, and who owns the next action or that it is unclaimed. Keep detailed implementation evidence and review findings on the pull request rather than duplicating them in the Task comment.
 
+When a new blocking Task dependency is discovered, add `Depends on #<number>` to the blocked Task and add the same Task as its native GitHub blocked-by relationship before moving it to Backlog. Keep those two records synchronized if the dependency is removed or replaced; a comment alone is not dependency metadata.
+
 Only work represented by an issue card on the project board is eligible for this dispatch loop. Ignore issues without a card and pull requests without a linked board issue unless the human explicitly asks you to act on them.
 
 Most code will be written and reviewed by agents working on separate tasks. Leave enough context in issues, pull requests, review comments, tests, and documentation for another agent to understand the reasoning and continue the work independently.

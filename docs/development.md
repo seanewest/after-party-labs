@@ -237,8 +237,14 @@ Whenever an agent changes a Task's state, that agent reconciles its direct paren
 continuing the loop. Keep the Story In Progress while required Tasks remain. After the final required
 Task is Done and the acceptance target is available, move the Story to Waiting for Human. A human
 acceptance failure moves it to Review; an explicit human confirmation moves it to Done. When a Task
-becomes Done, move any dependent Task held only by completed `Depends on` Tasks from Backlog to
-Ready.
+becomes Done, move any dependent Task whose recorded blockers are all Done from Backlog to Ready.
+
+If work reveals a new blocking Task dependency after proposal review, update the blocked Task before
+moving it to Backlog: add `Depends on #<number>` to its body, add the same Task as its native GitHub
+blocked-by relationship, and include the blocker in the signed transition comment. Keep the body and
+native relationship synchronized if the dependency is removed or replaced; the comment is handoff
+context, not dependency metadata. Do not remove a satisfied dependency merely because its Task is
+Done. Promote the blocked Task only when every recorded dependency is Done.
 
 Run the loop again after an action changes an item's state, including after opening a pull request,
 completing a review, merging, receiving a human answer, or finishing requested changes. Agents do

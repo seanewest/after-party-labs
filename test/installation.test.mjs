@@ -151,6 +151,7 @@ test('consent callbacks fail closed for mismatched state, tenant, expiry, and de
     { callback: () => consentCallback('77777777-7777-7777-7777-777777777777'), code: 'consent_state_mismatch' },
     { callback: () => consentCallback(nonce, '88888888-8888-8888-8888-888888888888'), code: 'tenant_mismatch' },
     { callback: () => consentCallback(), code: 'consent_state_expired', afterBeginNow: 2_000_000 },
+    { callback: () => consentCallback(), code: 'consent_state_expired', afterBeginNow: 999_999 },
     {
       callback: () => {
         const url = new URL(configuration.redirectUri);
@@ -218,6 +219,21 @@ test('verification retries while the new enterprise application and grant propag
   assert.equal(harness.requests.length, 5);
 });
 
+test('verification is idempotent for an existing correct installation', async () => {
+  const harness = createHarness({
+    responses: [...successfulResponses(), ...successfulResponses()],
+  });
+  const input = {
+    account,
+    accessToken: 'access-token',
+    callback: { accountId: account.homeAccountId, tenantId: studentTenantId },
+  };
+
+  assert.equal((await harness.installation.verify(input)).status, 'installed');
+  assert.equal((await harness.installation.verify(input)).status, 'installed');
+  assert.equal(harness.requests.length, 8);
+});
+
 test('verification rejects missing, duplicate, and mismatched enterprise applications', async () => {
   const cases = [
     { responses: successfulResponses({ servicePrincipals: [] }), code: 'enterprise_app_missing' },
@@ -281,6 +297,33 @@ test('verification rejects partial delegated consent and any app-only grant', as
       callback: { accountId: account.homeAccountId, tenantId: studentTenantId },
     }),
     (error) => error.code === 'application_grant_unexpected',
+  );
+});
+
+test('verification reports missing consent and insufficient verification rights', async () => {
+  const missingGrantHarness = createHarness({
+    responses: successfulResponses({ grants: [] }),
+  });
+  await assert.rejects(
+    missingGrantHarness.installation.verify({
+      account,
+      accessToken: 'access-token',
+      callback: { accountId: account.homeAccountId, tenantId: studentTenantId },
+    }),
+    (error) => error.code === 'delegated_grant_missing',
+  );
+
+  const unauthorizedHarness = createHarness({ responses: [response({}, 403)] });
+  await assert.rejects(
+    unauthorizedHarness.installation.verify({
+      account,
+      accessToken: 'access-token',
+      callback: { accountId: account.homeAccountId, tenantId: studentTenantId },
+    }),
+    (error) => {
+      assert.match(formatInstallationError(error), /tenant administrator/i);
+      return error.code === 'verification_unauthorized';
+    },
   );
 });
 

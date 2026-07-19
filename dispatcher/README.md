@@ -31,9 +31,9 @@ sessions and updating these records.
 
 Escalations are durable, deduplicated records for worker unavailability, ambiguous ownership,
 repeated review cycles, delivery failures, or a manual intervention. They remain assigned
-conceptually to Morpheus without silently changing a Task's `Agent`. Task #37 may create them when
-GitHub routing cannot safely choose a recipient, while Task #36 may create them when a worker is
-genuinely unavailable.
+conceptually to Morpheus without silently changing a Task's `Original Agent`. Task #37 may create
+them when GitHub routing cannot safely choose a recipient, while Task #36 may create them when a
+worker is genuinely unavailable.
 
 ## Extension points
 
@@ -63,10 +63,11 @@ conversation comments. It records every valid source event before advancing that
 checkpoint. Queue insertion uses the stable GitHub source ID as its deduplication key, so a crash
 between enqueueing and marking the event routed is safe to retry.
 
-Actionable signed feedback returns to the Task's `Agent`. The poller ignores the implementer's own
+Actionable signed feedback returns to the Task's sticky `Original Agent`; the mutable `Current Agent`
+does not affect routing. The poller ignores the implementer's own
 comments, approvals, and informational updates. A signed conversation comment is actionable when
 it explicitly names the implementer or uses clear change-request language; inline review comments
 and signed changes-requested reviews are actionable directly. Busy and sleeping workers retain
 their queued work. Missing or ambiguous board ownership, unavailable workers, source failures, and
 three changes-requested review cycles create durable Morpheus escalations without changing the
-board's `Agent` field.
+board's `Original Agent` field.

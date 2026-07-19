@@ -543,7 +543,7 @@ export class GitHubFeedbackPoller {
       event.sourceId,
       "queued",
       message.id,
-      `Routed to the Task's implementing Agent, ${route.implementingAgent}.`,
+      `Routed to the Task's Original Agent, ${route.implementingAgent}.`,
     );
 
     const worker = this.#queue.getWorker(route.implementingAgent);

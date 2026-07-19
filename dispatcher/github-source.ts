@@ -93,7 +93,7 @@ export class GhCliGitHubSource implements GitHubFeedbackSource {
         continue;
       }
       const workType = optionalString(fieldValue(item, "Work Type"));
-      const agentValue = optionalString(fieldValue(item, "Agent"));
+      const agentValue = optionalString(fieldValue(item, "Original Agent"));
       const implementingAgent = parseOptionalAgent(agentValue);
       const links = fieldValue(item, "Linked pull requests");
       if (!Array.isArray(links)) {

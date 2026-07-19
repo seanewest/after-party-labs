@@ -412,7 +412,7 @@ test("the gh adapter retries transient failures with bounded exponential backoff
   assert.equal(isTransientGitHubError(new Error("HTTP 404")), false);
 });
 
-test("the gh adapter parses active board routes and skips malformed source objects", async () => {
+test("the gh adapter routes by Original Agent and skips malformed source objects", async () => {
   const target = route();
   const responses = [
     JSON.stringify({
@@ -420,7 +420,8 @@ test("the gh adapter parses active board routes and skips malformed source objec
       items: [
         {
           status: "Review",
-          agent: "Beavis",
+          "original Agent": "Beavis",
+          "current Agent": "Daria",
           "work Type": "Task",
           "linked pull requests": [target.pullRequestUrl],
           content: {
@@ -433,7 +434,8 @@ test("the gh adapter parses active board routes and skips malformed source objec
         },
         {
           status: "Done",
-          agent: "Daria",
+          "original Agent": "Daria",
+          "current Agent": "Cornholio",
           "work Type": "Task",
           "linked pull requests": ["https://github.com/example/after-party/pull/1"],
           content: {

@@ -1,0 +1,27 @@
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { mkdirSync } from "node:fs";
+
+const applicationDirectory = "after-party";
+
+export function defaultDispatcherDatabasePath(
+  environment: NodeJS.ProcessEnv = process.env,
+): string {
+  if (environment.PARTY_DISPATCHER_DB) {
+    return resolve(environment.PARTY_DISPATCHER_DB);
+  }
+
+  const stateHome = environment.XDG_STATE_HOME
+    ? resolve(environment.XDG_STATE_HOME)
+    : join(homedir(), ".local", "state");
+
+  return join(stateHome, applicationDirectory, "dispatcher.sqlite");
+}
+
+export function ensureDatabaseDirectory(databasePath: string): void {
+  if (databasePath === ":memory:" || databasePath.startsWith("file:")) {
+    return;
+  }
+
+  mkdirSync(dirname(databasePath), { recursive: true });
+}

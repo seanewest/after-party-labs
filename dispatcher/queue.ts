@@ -107,6 +107,47 @@ export interface QueueInspection {
   message: QueueMessage;
   receipt: DeliveryReceipt | null;
   attempts: DeliveryAttempt[];
+  interruptions: TurnInterruption[];
+}
+
+export const TURN_INTERRUPTION_DISPOSITIONS = [
+  "retry_safe",
+  "escalated",
+] as const;
+
+export type TurnInterruptionDisposition =
+  (typeof TURN_INTERRUPTION_DISPOSITIONS)[number];
+
+export interface ReportTurnInterruptionInput {
+  messageId: string;
+  reportedBy: AgentName | string;
+  reason: string;
+  workStarted: boolean | null;
+  retrySafe: boolean;
+  dedupeKey: string;
+  retryAfterMs?: number;
+  details?: JsonValue;
+}
+
+export interface TurnInterruption {
+  id: string;
+  messageId: string;
+  reportedBy: AgentName;
+  interruptedAttemptNumber: number;
+  disposition: TurnInterruptionDisposition;
+  reason: string;
+  workStarted: boolean | null;
+  details: JsonValue | null;
+  dedupeKey: string;
+  reportedAt: number;
+  retryAvailableAt: number | null;
+  escalationId: string | null;
+}
+
+export interface TurnInterruptionResult {
+  message: QueueMessage;
+  interruption: TurnInterruption;
+  escalation: Escalation | null;
 }
 
 export interface WorkerRecord {
@@ -190,6 +231,8 @@ const schema = `
   INSERT OR IGNORE INTO dispatcher_meta (key, value)
   VALUES ('schema_version', '1');
 
+  UPDATE dispatcher_meta SET value = '2' WHERE key = 'schema_version';
+
   CREATE TABLE IF NOT EXISTS messages (
     id TEXT PRIMARY KEY,
     sender TEXT NOT NULL,
@@ -251,6 +294,26 @@ const schema = `
 
   CREATE INDEX IF NOT EXISTS delivery_attempts_message
     ON delivery_attempts (message_id, attempt_number);
+
+  CREATE TABLE IF NOT EXISTS turn_interruptions (
+    id TEXT PRIMARY KEY,
+    message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    reported_by TEXT NOT NULL,
+    interrupted_attempt_number INTEGER NOT NULL,
+    disposition TEXT NOT NULL CHECK (disposition IN (
+      'retry_safe', 'escalated'
+    )),
+    reason TEXT NOT NULL,
+    work_started INTEGER CHECK (work_started IS NULL OR work_started IN (0, 1)),
+    details_json TEXT,
+    dedupe_key TEXT NOT NULL UNIQUE,
+    reported_at INTEGER NOT NULL,
+    retry_available_at INTEGER,
+    escalation_id TEXT
+  ) STRICT;
+
+  CREATE INDEX IF NOT EXISTS turn_interruptions_message
+    ON turn_interruptions (message_id, reported_at, id);
 
   CREATE TABLE IF NOT EXISTS escalations (
     id TEXT PRIMARY KEY,
@@ -379,11 +442,17 @@ export class DispatcherQueue {
         "SELECT * FROM delivery_attempts WHERE message_id = ? ORDER BY attempt_number",
       )
       .all(id) as MessageRow[];
+    const interruptionRows = this.#database
+      .prepare(
+        "SELECT * FROM turn_interruptions WHERE message_id = ? ORDER BY reported_at, id",
+      )
+      .all(id) as MessageRow[];
 
     return {
       message,
       receipt: receiptRow ? mapReceipt(receiptRow) : null,
       attempts: attemptRows.map(mapAttempt),
+      interruptions: interruptionRows.map(mapTurnInterruption),
     };
   }
 
@@ -686,6 +755,10 @@ export class DispatcherQueue {
           `Message "${id}" is addressed to ${message.recipient}, not ${acceptedBy}.`,
         );
       }
+      if (["receipted", "acknowledged", "completed"].includes(message.state)) {
+        return message;
+      }
+      this.#requireState(message, ["delivering"], "record receipt");
 
       this.#database
         .prepare(`
@@ -695,18 +768,150 @@ export class DispatcherQueue {
         `)
         .run(id, acceptedBy, now, detailsJson);
 
-      if (!["acknowledged", "completed"].includes(message.state)) {
+      this.#database
+        .prepare(`
+          UPDATE messages
+          SET state = 'receipted', updated_at = ?, lease_owner = NULL,
+              lease_expires_at = NULL, last_error = NULL, cancelled_at = NULL
+          WHERE id = ?
+        `)
+        .run(now, id);
+      this.#finishOpenAttempt(id, now, "receipted", null);
+      return this.#requireMessage(id);
+    });
+  }
+
+  reportTurnInterruption(
+    input: ReportTurnInterruptionInput,
+  ): TurnInterruptionResult {
+    const messageId = nonEmpty(input.messageId, "message ID");
+    const reportedBy = parseAgentName(input.reportedBy);
+    const reason = nonEmpty(input.reason, "interruption reason");
+    const dedupeKey = nonEmpty(input.dedupeKey, "interruption dedupe key");
+    const detailsJson =
+      input.details === undefined
+        ? null
+        : serializeJson(input.details, "interruption details");
+    const escalationDetailsJson = serializeJson(
+      {
+        reason,
+        workStarted: input.workStarted,
+        evidence: input.details ?? null,
+      },
+      "interruption escalation details",
+    );
+    const retryAfterMs = input.retryAfterMs ?? 0;
+    if (!Number.isSafeInteger(retryAfterMs) || retryAfterMs < 0 || retryAfterMs > 300_000) {
+      throw new QueueError("Retry delay must be an integer between 0 and 300000 milliseconds.");
+    }
+    if (input.retrySafe && input.workStarted !== false) {
+      throw new QueueError(
+        "Safe automatic retry requires structured evidence that agent work did not start.",
+      );
+    }
+    const now = this.#now();
+
+    return this.#transaction(() => {
+      const existingRow = this.#database
+        .prepare("SELECT * FROM turn_interruptions WHERE dedupe_key = ?")
+        .get(dedupeKey) as MessageRow | undefined;
+      if (existingRow) {
+        const interruption = mapTurnInterruption(existingRow);
+        if (interruption.messageId !== messageId) {
+          throw new QueueError(
+            `Interruption dedupe key "${dedupeKey}" belongs to another message.`,
+          );
+        }
+        return {
+          message: this.#requireMessage(messageId),
+          interruption,
+          escalation: interruption.escalationId
+            ? this.#requireEscalation(interruption.escalationId)
+            : null,
+        };
+      }
+
+      const message = this.#requireMessage(messageId);
+      this.#requireState(
+        message,
+        ["receipted", "acknowledged"],
+        "report turn interruption",
+      );
+      const disposition: TurnInterruptionDisposition = input.retrySafe
+        ? "retry_safe"
+        : "escalated";
+      const interruptionId = randomUUID();
+      const retryAvailableAt = input.retrySafe ? now + retryAfterMs : null;
+      let escalationId: string | null = null;
+
+      if (input.retrySafe) {
         this.#database
           .prepare(`
             UPDATE messages
-            SET state = 'receipted', updated_at = ?, lease_owner = NULL,
-                lease_expires_at = NULL, last_error = NULL, cancelled_at = NULL
+            SET state = 'queued', updated_at = ?, available_at = ?,
+                lease_owner = NULL, lease_expires_at = NULL, last_error = ?
             WHERE id = ?
           `)
-          .run(now, id);
+          .run(now, retryAvailableAt, reason, messageId);
+      } else {
+        this.#database
+          .prepare(`
+            UPDATE messages
+            SET state = 'failed', updated_at = ?, lease_owner = NULL,
+                lease_expires_at = NULL, last_error = ?
+            WHERE id = ?
+          `)
+          .run(now, reason, messageId);
+        escalationId = randomUUID();
+        this.#database
+          .prepare(`
+            INSERT INTO escalations (
+              id, kind, status, requested_by, subject_agent, message_id,
+              summary, details_json, dedupe_key, source_url, created_at, updated_at
+            ) VALUES (?, 'delivery_failure', 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `)
+          .run(
+            escalationId,
+            reportedBy,
+            message.recipient,
+            messageId,
+            `Turn interruption for ${message.recipient} requires Morpheus review: ${reason}`,
+            escalationDetailsJson,
+            `turn-interruption:${dedupeKey}`,
+            message.sourceUrl,
+            now,
+            now,
+          );
       }
-      this.#finishOpenAttempt(id, now, "receipted", null);
-      return this.#requireMessage(id);
+
+      this.#database
+        .prepare(`
+          INSERT INTO turn_interruptions (
+            id, message_id, reported_by, interrupted_attempt_number,
+            disposition, reason, work_started, details_json, dedupe_key,
+            reported_at, retry_available_at, escalation_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          interruptionId,
+          messageId,
+          reportedBy,
+          message.attemptCount,
+          disposition,
+          reason,
+          input.workStarted === null ? null : input.workStarted ? 1 : 0,
+          detailsJson,
+          dedupeKey,
+          now,
+          retryAvailableAt,
+          escalationId,
+        );
+
+      return {
+        message: this.#requireMessage(messageId),
+        interruption: this.#requireTurnInterruption(interruptionId),
+        escalation: escalationId ? this.#requireEscalation(escalationId) : null,
+      };
     });
   }
 
@@ -858,6 +1063,16 @@ export class DispatcherQueue {
     return escalation;
   }
 
+  #requireTurnInterruption(id: string): TurnInterruption {
+    const row = this.#database
+      .prepare("SELECT * FROM turn_interruptions WHERE id = ?")
+      .get(id) as MessageRow | undefined;
+    if (!row) {
+      throw new QueueError(`Turn interruption "${id}" does not exist.`);
+    }
+    return mapTurnInterruption(row);
+  }
+
   #requireOwnedInFlight(
     message: QueueMessage,
     consumer: string,
@@ -959,6 +1174,29 @@ function mapAttempt(row: MessageRow): DeliveryAttempt {
     finishedAt: nullableNumber(row.finished_at),
     outcome: row.outcome === null ? null : (String(row.outcome) as DeliveryAttemptOutcome),
     error: nullableString(row.error),
+  };
+}
+
+function mapTurnInterruption(row: MessageRow): TurnInterruption {
+  return {
+    id: String(row.id),
+    messageId: String(row.message_id),
+    reportedBy: parseAgentName(String(row.reported_by)),
+    interruptedAttemptNumber: Number(row.interrupted_attempt_number),
+    disposition: String(row.disposition) as TurnInterruptionDisposition,
+    reason: String(row.reason),
+    workStarted:
+      row.work_started === null || row.work_started === undefined
+        ? null
+        : Number(row.work_started) === 1,
+    details:
+      row.details_json === null
+        ? null
+        : parseJson(String(row.details_json), "stored interruption details"),
+    dedupeKey: String(row.dedupe_key),
+    reportedAt: Number(row.reported_at),
+    retryAvailableAt: nullableNumber(row.retry_available_at),
+    escalationId: nullableString(row.escalation_id),
   };
 }
 

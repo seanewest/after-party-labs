@@ -249,6 +249,170 @@ test("a durable recipient receipt suppresses retry after the queue process crash
   }
 });
 
+test("a structured pre-work capacity interruption requeues the same receipted message", () => {
+  const state = fixture();
+  try {
+    const first = new DispatcherQueue(state.databasePath, { now: state.now });
+    const message = first.enqueue({
+      sender: "morpheus",
+      recipient: "cornholio",
+      payload: { text: "Resume Task #36" },
+    });
+    first.claimNext({ consumer: "runner-a", leaseMs: 500 });
+    first.beginDelivery(message.id, "runner-a");
+    first.recordReceipt(message.id, "cornholio", { turnId: "turn-1" });
+    first.acknowledge(message.id);
+
+    const interrupted = first.reportTurnInterruption({
+      messageId: message.id,
+      reportedBy: "cornholio",
+      reason: "Selected model is at capacity",
+      workStarted: false,
+      retrySafe: true,
+      retryAfterMs: 200,
+      dedupeKey: "turn:turn-1:capacity",
+      details: { event: "turn.failed", code: "model_capacity" },
+    });
+    assert.equal(interrupted.message.state, "queued");
+    assert.equal(interrupted.message.availableAt, 1_200);
+    assert.equal(interrupted.interruption.disposition, "retry_safe");
+    assert.equal(interrupted.interruption.interruptedAttemptNumber, 1);
+    assert.equal(first.inspect(message.id).receipt?.acceptedAt, 1_000);
+    first.close();
+
+    state.setTime(1_199);
+    const restarted = new DispatcherQueue(state.databasePath, { now: state.now });
+    assert.equal(restarted.claimNext({ consumer: "runner-b", leaseMs: 500 }), null);
+    state.setTime(1_200);
+    const retry = restarted.claimNext({ consumer: "runner-b", leaseMs: 500 });
+    assert.equal(retry?.id, message.id);
+    assert.equal(retry?.attemptCount, 2);
+    restarted.beginDelivery(message.id, "runner-b");
+    assert.equal(restarted.recordReceipt(message.id, "cornholio").state, "receipted");
+    restarted.acknowledge(message.id);
+    restarted.complete(message.id);
+
+    const duplicate = restarted.reportTurnInterruption({
+      messageId: message.id,
+      reportedBy: "cornholio",
+      reason: "duplicate event",
+      workStarted: false,
+      retrySafe: true,
+      dedupeKey: "turn:turn-1:capacity",
+    });
+    assert.equal(duplicate.interruption.id, interrupted.interruption.id);
+    assert.equal(duplicate.message.state, "completed");
+    assert.equal(restarted.inspect(message.id).interruptions.length, 1);
+    restarted.close();
+  } finally {
+    state.cleanup();
+  }
+});
+
+test("an ambiguous post-receipt interruption fails closed and escalates exactly once", () => {
+  const state = fixture();
+  try {
+    const first = new DispatcherQueue(state.databasePath, { now: state.now });
+    const message = first.enqueue({
+      sender: "morpheus",
+      recipient: "beavis",
+      payload: { text: "Continue the implementation" },
+      sourceUrl: "https://github.com/example/repo/issues/44",
+    });
+    first.claimNext({ consumer: "runner-a", leaseMs: 500 });
+    first.beginDelivery(message.id, "runner-a");
+    first.recordReceipt(message.id, "beavis", { turnId: "turn-2" });
+
+    const interrupted = first.reportTurnInterruption({
+      messageId: message.id,
+      reportedBy: "beavis",
+      reason: "Connection ended after tool activity",
+      workStarted: true,
+      retrySafe: false,
+      dedupeKey: "turn:turn-2:connection",
+      details: { event: "error", toolActivityObserved: true },
+    });
+    assert.equal(interrupted.message.state, "failed");
+    assert.equal(interrupted.interruption.disposition, "escalated");
+    assert.equal(interrupted.escalation?.kind, "delivery_failure");
+    assert.equal(interrupted.escalation?.subjectAgent, "beavis");
+    assert.equal(first.claimNext({ consumer: "runner-b", leaseMs: 500 }), null);
+    first.close();
+
+    const restarted = new DispatcherQueue(state.databasePath, { now: state.now });
+    const duplicate = restarted.reportTurnInterruption({
+      messageId: message.id,
+      reportedBy: "beavis",
+      reason: "duplicate event",
+      workStarted: null,
+      retrySafe: false,
+      dedupeKey: "turn:turn-2:connection",
+    });
+    assert.equal(duplicate.interruption.id, interrupted.interruption.id);
+    assert.equal(duplicate.escalation?.id, interrupted.escalation?.id);
+    assert.equal(restarted.listEscalations({ status: "open" }).length, 1);
+    assert.equal(restarted.inspect(message.id).interruptions.length, 1);
+    restarted.close();
+  } finally {
+    state.cleanup();
+  }
+});
+
+test("turn interruption recovery rejects unsafe retries and terminal message states", () => {
+  const state = fixture();
+  try {
+    const queue = new DispatcherQueue(state.databasePath, { now: state.now });
+    const message = queue.enqueue({
+      sender: "morpheus",
+      recipient: "daria",
+      payload: { text: "Do not replay ambiguously" },
+    });
+    queue.claimNext({ consumer: "runner-a", leaseMs: 500 });
+    queue.beginDelivery(message.id, "runner-a");
+    queue.recordReceipt(message.id, "daria");
+    assert.throws(
+      () =>
+        queue.reportTurnInterruption({
+          messageId: message.id,
+          reportedBy: "daria",
+          reason: "Some work may have started",
+          workStarted: null,
+          retrySafe: true,
+          dedupeKey: "turn:unsafe",
+        }),
+      /requires structured evidence/,
+    );
+    queue.acknowledge(message.id);
+    queue.complete(message.id);
+    assert.throws(
+      () =>
+        queue.reportTurnInterruption({
+          messageId: message.id,
+          reportedBy: "daria",
+          reason: "Too late",
+          workStarted: false,
+          retrySafe: true,
+          dedupeKey: "turn:completed",
+        }),
+      InvalidTransitionError,
+    );
+
+    const cancelled = queue.enqueue({
+      sender: "morpheus",
+      recipient: "daria",
+      payload: { text: "Cancelled" },
+    });
+    queue.cancel(cancelled.id);
+    assert.throws(
+      () => queue.recordReceipt(cancelled.id, "daria"),
+      InvalidTransitionError,
+    );
+    queue.close();
+  } finally {
+    state.cleanup();
+  }
+});
+
 test("worker availability is durable, typed, and protected from stale observations", () => {
   const state = fixture();
   try {

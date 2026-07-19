@@ -8,7 +8,8 @@ runner against this core.
 
 Delivery is **at least once**. Each envelope keeps one stable message ID across attempts. A runner
 claims a lease, marks delivery as started, and the recipient records a durable receipt keyed by the
-message ID. Once that receipt exists, a restarted queue will not claim the message again.
+message ID. Once that receipt exists, lease expiry alone will not make a restarted queue claim the
+message again.
 
 There is an unavoidable crash window after an external recipient accepts a prompt but before the
 receipt becomes durable. The queue retries the same message ID after the lease expires; it does not
@@ -21,6 +22,22 @@ The normal state sequence is:
 Delivery errors move an in-flight message to `failed`; an explicit retry returns it to `queued`.
 Expired `leased` or `delivering` messages return to `queued` automatically. Only `queued` and
 `failed` messages can be cancelled before a receipt arrives.
+
+Prompt receipt and successful model work are separate facts. After receipt, a runner reports a
+structured turn failure with `reportTurnInterruption` or the `turn-interrupted` CLI command:
+
+- A transient failure with evidence that no model output or tool activity began may return the same
+  recognizable message ID to `queued` after a delay of at most five minutes. The original receipt
+  and an interruption record remain durable for audit.
+- A failure after observable work, or one whose progress is unknown, moves the message to `failed`
+  and creates one deduplicated `delivery_failure` escalation for Morpheus. It is never replayed
+  automatically because doing so could duplicate work or side effects.
+
+A capacity or provider interruption is not permanent worker unavailability. Task #36's session
+runner must prefer structured `turn.failed`, `turn.completed`, and error events when the Codex
+surface exposes them. Lifecycle hooks may record session and prompt boundaries, but the runner must
+not classify terminal text by screen scraping. If the available surface cannot prove that no work
+started, it takes the ambiguous escalation path.
 
 ## Worker and escalation boundary
 
@@ -37,7 +54,8 @@ worker is genuinely unavailable.
 
 ## Extension points
 
-- A session runner calls `claimNext`, `beginDelivery`, `recordReceipt`, and `acknowledge`.
+- A session runner calls `claimNext`, `beginDelivery`, `recordReceipt`, and `acknowledge`, then
+  `complete` after a successful turn or `reportTurnInterruption` after a structured failed turn.
 - A session runner calls `setWorkerAvailability` with its independently observed lifecycle state.
 - The GitHub poller records source events and advances each source checkpoint in one SQLite
   transaction, then calls `enqueue` with a durable `dedupeKey` derived from the GitHub event ID.

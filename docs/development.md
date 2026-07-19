@@ -157,16 +157,25 @@ and concise verification steps. Move the Story to Done and close it only after t
 confirms acceptance.
 
 If human acceptance fails, record the reason on the Story and move it to Review. Create or reopen
-the required Tasks, move the Story back to In Progress, and leave its Agent blank. A Story in Review
-is reviewed or reconciled, never claimed for implementation. Stories never use Ready.
+the required Tasks, move the Story back to In Progress, and leave its Original Agent blank. A Story
+in Review is reviewed or reconciled, never claimed for implementation. Stories never use Ready.
 
 Until pull request previews exist, merge satisfactory Task pull requests normally and perform Story
 acceptance afterward against `main` or the deployed application.
 
-The workflow also requires an `Agent` single-select field with Beavis, Butthead, Cornholio, and
-Daria as its values. It records the Task's implementing agent, not the current reviewer. A Ready
-Task with no Agent may be claimed by any suitable agent; one with an Agent is reserved for that
-agent. A Story's Agent remains blank.
+The workflow requires `Original Agent` and `Current Agent` single-select fields with Beavis,
+Butthead, Cornholio, Daria, and Morpheus as their values.
+
+- **Original Agent** records the agent that opened the Task's first implementation pull request.
+  Set it when that pull request is opened and do not change it during review, rework, or takeover.
+  Review changes normally return there because that agent retains the richest implementation
+  context.
+- **Current Agent** records who owns the next action now. Set it when an agent claims
+  implementation, rework, review, or re-review. Clear it when work is handed to an unclaimed review
+  stage, waits on the human, or reaches Done.
+
+A Story never has an Original Agent. Its Current Agent is normally blank and is set only while an
+agent actively owns proposal review or failed-acceptance reconciliation.
 
 ### Reviewing a Story proposal
 
@@ -175,8 +184,8 @@ review, move the Story to Review and leave this comment:
 
     [HUMAN] Ready for proposal review.
 
-An agent that did not draft the proposal claims the review with a signed comment. The Story's Agent
-remains blank. The reviewer checks that:
+An agent that did not draft the proposal claims the review with a signed comment and sets the
+Story's Current Agent to itself. The Story's Original Agent remains blank. The reviewer checks that:
 
 "Reviewed" means the review occurred, not that the proposal was approved; always report the verdict
 as approved, changes requested, or waiting for human.
@@ -188,20 +197,21 @@ as approved, changes requested, or waiting for human.
 - required human actions, live validation, and safety boundaries are represented.
 
 Record the approved parallel groups and dependency order in a signed Story comment. On approval,
-move the Story to In Progress, move immediately actionable Tasks to Ready, and keep dependent Tasks
-in Backlog. If the proposal needs a human decision, move the Story to Waiting for Human and ask one
-clear question. If it is not ready for approval, explain the required changes and move it to
-Backlog. The human may revise it and submit it for Review again.
+move the Story to In Progress, clear its Current Agent, move immediately actionable Tasks to Ready,
+and keep dependent Tasks in Backlog. If the proposal needs a human decision, clear Current Agent,
+move the Story to Waiting for Human, and ask one clear question. If it is not ready for approval,
+clear Current Agent, explain the required changes, and move it to Backlog. The human may revise it
+and submit it for Review again.
 
 ### Checking the board
 
 When the human says `check the board`, run this loop in order until nothing is actionable:
 
-1. Resume owned unfinished work. Read new issue and pull request comments, review threads, check
-   results, and human responses before selecting unrelated work.
+1. Resume unfinished work whose Current Agent is you. Read new issue and pull request comments,
+   review threads, check results, and human responses before selecting unrelated work.
 2. Reconcile Stories affected by Task state changes or human responses. A Story in Review needs
-   proposal review or failed-acceptance triage; claim the review with a signed comment but leave its
-   Agent blank.
+   proposal review or failed-acceptance triage; claim the review with a signed comment, set Current
+   Agent to yourself, and leave Original Agent blank.
 3. If no owned item needs action, claim a suitable Task pull request in Review that was created by
    another agent.
 4. If no review is available and there is no active implementation Task, claim the first compatible
@@ -221,14 +231,15 @@ not poll continuously; once the loop is empty, wait for the human to say `check 
 
 ### Claiming implementation work
 
-Before substantive work, confirm that the issue is a Task, is still Ready, and its Agent is blank
-or already set to you. Set the Agent to yourself, move the Task to In Progress, and leave a signed
-claim comment, for example:
+Before substantive work, confirm that the issue is a Task, is still Ready, and its Current Agent is
+blank or already set to you. Set Current Agent to yourself, move the Task to In Progress, and leave
+a signed claim comment, for example:
 
     [BEAVIS] Claimed for implementation. Beginning work now.
 
-If another agent has claimed or is reserved for the issue, continue the dispatch loop without
-working on it.
+If another agent is Current Agent, continue the dispatch loop without working on it. Original Agent
+does not reserve an unclaimed Task; it remains sticky historical ownership after the first pull
+request exists.
 
 An agent may have only one active implementation Task, and therefore only one unmerged
 implementation pull request, at a time. It may review another agent's work while its own pull
@@ -239,21 +250,27 @@ or explicitly reassigned.
 
 When implementation and required validation are complete, the implementer links the pull request
 to the Task, marks the pull request ready, moves the Task to Review, and leaves a concise handoff:
-what changed, how it was tested, and anything the reviewer should pay attention to.
+what changed, how it was tested, and anything the reviewer should pay attention to. If Original
+Agent is blank, set it to the implementer that opened this first implementation pull request. Clear
+Current Agent so an independent reviewer can claim the next action.
 
 An agent must not review its own implementation. Before reviewing another agent's pull request,
-leave a signed comment claiming the review. The Agent field remains set to the implementer.
+leave a signed comment claiming the review and set Current Agent to yourself. Original Agent
+remains unchanged.
 
 The reviewer completes one of these outcomes:
 
 - If the current head is satisfactory and the required checks and evidence are complete, merge the
-  pull request and move the Task to Done.
-- If implementation changes are needed, explain them clearly and move the Task to In Progress.
-- If a human decision or action is needed, explain it clearly and move the Task to Waiting for
-  Human.
+  pull request, move the Task to Done, and clear Current Agent.
+- If implementation changes are needed, explain them clearly, move the Task to In Progress, and set
+  Current Agent to Original Agent. Use another agent only when the original is unavailable, work is
+  explicitly reassigned, or repeated cycles justify fresh ownership; never change Original Agent.
+- If a human decision or action is needed, explain it clearly, clear Current Agent, and move the
+  Task to Waiting for Human.
 
-The original implementer handles requested changes and returns the Task to Review when it is
-ready. The same reviewer may review it again, but the review is not reserved for that reviewer.
+The Original Agent normally handles requested changes. When it is ready, that agent moves the Task
+to Review and clears Current Agent. The same reviewer may claim it again, but the re-review is not
+reserved for that reviewer.
 
 Merging a Task's pull request completes that Task, not its parent Story. Reconcile the parent Story,
 but close it only after all required Tasks are Done and the human explicitly confirms its acceptance
@@ -266,9 +283,10 @@ it is not a general approval stage. Address the human directly in a short, natur
 says what is needed, why, your recommendation when there is a choice, and what will happen next.
 Do not turn the request into a form or a long agent report.
 
-The Agent remains the implementer for a Task and blank for a Story. On the next board check, the
-agent reads the response, moves the issue to the appropriate status, and continues. The human does
-not need to update the project card.
+Original Agent remains unchanged for a Task and blank for a Story. Current Agent remains blank while
+waiting. On the next board check, an agent reads the response, claims the next action by setting
+Current Agent, moves the issue to the appropriate status, and continues. The human does not need to
+update the project card.
 
 ### Durable handoffs
 

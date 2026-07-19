@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 
 import { RuntimeAuthorizationError } from './authorization.mjs';
+import { TenantLockError } from './tenant-lock.mjs';
 
 const CLAIM_NAMES = Object.freeze({
   'http://schemas.microsoft.com/identity/claims/objectidentifier': 'oid',
@@ -101,6 +102,9 @@ export function createRuntimeAuthorizationHandler({
       } catch (error) {
         if (error instanceof RuntimeAuthorizationError) {
           return rejected(error.status, error.code);
+        }
+        if (error instanceof TenantLockError && error.code === 'lock_busy') {
+          return rejected(409, 'lock_busy');
         }
         return rejected(503, 'runtime_unavailable');
       }

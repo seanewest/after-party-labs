@@ -3,6 +3,7 @@ import { Buffer } from 'node:buffer';
 import test from 'node:test';
 
 import { RuntimeAuthorizationError } from '../runtime/authorization.mjs';
+import { TenantLockError } from '../runtime/tenant-lock.mjs';
 import {
   createRuntimeAuthorizationHandler,
   decodeContainerAppsPrincipal,
@@ -138,4 +139,30 @@ test('malformed principals, authorization failures, and internal errors return f
   });
   assert.deepEqual(unavailable.body, { status: 'rejected', code: 'runtime_unavailable' });
   assert.doesNotMatch(JSON.stringify(unavailable), /storage account|credential detail/);
+});
+
+test('an externally held tenant lock returns only a fixed contention response', async () => {
+  const handler = createRuntimeAuthorizationHandler({
+    authorizer: { authorize: async () => ({ operation: 'lock.test' }) },
+    getInstallation: async () => ({ status: 'verified' }),
+    runOperation: async () => {
+      throw new TenantLockError('lock_busy', {
+        owner: { operationId: 'secret-operation', source: 'private-source' },
+      });
+    },
+  });
+
+  const response = await handler.handle({
+    method: 'POST',
+    path: '/operations',
+    headers: { 'x-ms-client-principal': encodedPrincipal() },
+    body: { operation: 'lock.test' },
+  });
+
+  assert.deepEqual(response, {
+    status: 409,
+    headers: { 'cache-control': 'no-store', 'content-type': 'application/json' },
+    body: { status: 'rejected', code: 'lock_busy' },
+  });
+  assert.doesNotMatch(JSON.stringify(response), /secret-operation|private-source/);
 });

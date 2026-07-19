@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import test from 'node:test';
 
+import { createRuntimeAuthorizationHandler } from '../runtime/http.mjs';
+import { TenantLockError } from '../runtime/tenant-lock.mjs';
 import { createExperimentCardController } from '../site/experiments.js';
+import { createRuntimeApiClient } from '../site/runtime-api.js';
 import { createRuntimeCardsController } from '../site/runtime-cards.js';
 
 const tenantId = '11111111-1111-1111-1111-111111111111';
@@ -37,7 +41,7 @@ function plan() {
   };
 }
 
-function harness({ preflightError } = {}) {
+function harness({ preflightError, runtimeApiFactory: runtimeApiFactoryOverride } = {}) {
   const events = [];
   const rendered = new Map();
   const calls = { deploy: 0, grant: 0, lock: 0 };
@@ -75,6 +79,7 @@ function harness({ preflightError } = {}) {
       },
     },
     runtimeApiFactory(value) {
+      if (runtimeApiFactoryOverride) return runtimeApiFactoryOverride(value);
       assert.equal(value.tenantId, tenantId);
       return {
         async run(operation) {
@@ -163,4 +168,60 @@ test('an insufficient role fails preflight before deployment', async () => {
   assert.equal(controller.getState().plan, null);
   assert.equal(rendered.get('install-tenant-runtime').status, 'blocked');
   assert.match(events.at(-1)[1], /required Azure role/i);
+});
+
+test('an externally held lock is shown as contention without owner details', async () => {
+  const handler = createRuntimeAuthorizationHandler({
+    authorizer: {
+      authorize: async ({ request }) => ({ status: 'authorized', ...request }),
+    },
+    getInstallation: async () => ({ status: 'verified' }),
+    runOperation: async () => {
+      throw new TenantLockError('lock_busy', {
+        owner: { operationId: 'secret-operation', source: 'private-source' },
+      });
+    },
+  });
+  const { controller, rendered } = harness({
+    runtimeApiFactory(value) {
+      return createRuntimeApiClient({
+        configuration: {
+          endpoint: value.apiUrl,
+          tenantId: value.tenantId,
+          runtimeId: value.apiId,
+          commit: value.commit,
+          scope: 'api://66666666-6666-4666-8666-666666666666/AfterParty.Operate',
+        },
+        acquireAccessToken: async () => 'opaque-token',
+        randomUUID: () => '77777777-7777-4777-8777-777777777777',
+        async fetchRuntime(url, options) {
+          const response = await handler.handle({
+            method: options.method,
+            path: new URL(url).pathname,
+            headers: {
+              'x-ms-client-principal': Buffer.from(JSON.stringify({
+                auth_typ: 'aad',
+                claims: [],
+              })).toString('base64'),
+            },
+            body: JSON.parse(options.body),
+          });
+          return {
+            ok: response.status >= 200 && response.status < 300,
+            json: async () => response.body,
+          };
+        },
+      });
+    },
+  });
+  await controller.connect({ tenantId, servicePrincipalId });
+  await controller.verifySelection({ subscriptionId, location: 'eastus' });
+  controller.confirm(true);
+  await controller.getState().controllers[0].run();
+  await controller.getState().controllers[1].run();
+
+  const model = rendered.get('test-tenant-lock');
+  assert.equal(model.status, 'failure');
+  assert.match(model.statusMessage, /another tenant-changing operation is already running/i);
+  assert.doesNotMatch(JSON.stringify(model), /secret-operation|private-source/);
 });

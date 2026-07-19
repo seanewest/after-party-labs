@@ -91,6 +91,7 @@ export function formatRuntimeApiError(error) {
   const messages = {
     installation_missing: 'Install or repair the tenant runtime before running this experiment.',
     insufficient_scope: 'Reconnect the tenant to grant After Party runtime access.',
+    lock_busy: 'Another tenant-changing operation is already running. Wait for it to finish and try again.',
     operation_not_allowed: 'This operation is not available in the installed runtime.',
     replay_detected: 'That request was already received. Start the experiment again.',
     runtime_configuration_invalid: 'The tenant runtime connection is incomplete.',
@@ -161,6 +162,7 @@ export function createRuntimeApiClient({ configuration, acquireAccessToken, fetc
         const allowedCodes = new Set([
           'installation_missing',
           'insufficient_scope',
+          'lock_busy',
           'operation_not_allowed',
           'replay_detected',
           'session_expired',

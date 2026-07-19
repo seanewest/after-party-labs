@@ -19,6 +19,7 @@ var environmentName = '${runtimeName}-environment'
 var apiName = '${runtimeName}-api'
 var apiResourceId = '${resourceGroup().id}/providers/Microsoft.App/containerApps/${apiName}'
 var publishedSpaOrigin = 'https://seanewest.github.io'
+var localSpaOrigin = 'http://127.0.0.1:4173'
 var storageName = take('ap${uniqueString(subscription().id, toLower(resourceGroup().id), runtimeName)}', 24)
 var storageBlobDataContributorRoleId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
@@ -113,6 +114,7 @@ resource api 'Microsoft.App/containerApps@2025-01-01' = {
           allowCredentials: false
           allowedOrigins: [
             publishedSpaOrigin
+            localSpaOrigin
           ]
           allowedMethods: [
             'POST'

@@ -24,6 +24,7 @@ const INSTALL_FAILURES = Object.freeze({
 const LOCK_FAILURES = Object.freeze({
   installation_missing: 'Install or repair the tenant runtime first.',
   insufficient_scope: 'Reconnect the tenant to grant runtime access.',
+  lock_busy: 'Another tenant-changing operation is already running. Wait for it to finish, then test the lock again.',
   operation_not_allowed: 'This runtime does not expose the lock diagnostic.',
   replay_detected: 'The diagnostic request was already received. Run it again.',
   runtime_configuration_invalid: 'The verified runtime connection is incomplete.',

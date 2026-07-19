@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.45.15.27210",
-      "templateHash": "16346881453095157303"
+      "templateHash": "11150415697938089118"
     }
   },
   "parameters": {
@@ -142,7 +142,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.45.15.27210",
-              "templateHash": "16614380522661331607"
+              "templateHash": "8314741032827233763"
             }
           },
           "parameters": {
@@ -180,6 +180,7 @@
             "apiName": "[format('{0}-api', parameters('runtimeName'))]",
             "apiResourceId": "[format('{0}/providers/Microsoft.App/containerApps/{1}', resourceGroup().id, variables('apiName'))]",
             "publishedSpaOrigin": "https://seanewest.github.io",
+            "localSpaOrigin": "http://127.0.0.1:4173",
             "storageName": "[take(format('ap{0}', uniqueString(subscription().id, toLower(resourceGroup().id), parameters('runtimeName'))), 24)]",
             "storageBlobDataContributorRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]"
           },
@@ -287,7 +288,8 @@
                     "corsPolicy": {
                       "allowCredentials": false,
                       "allowedOrigins": [
-                        "[variables('publishedSpaOrigin')]"
+                        "[variables('publishedSpaOrigin')]",
+                        "[variables('localSpaOrigin')]"
                       ],
                       "allowedMethods": [
                         "POST",

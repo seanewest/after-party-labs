@@ -134,6 +134,7 @@ test('the lock card accepts only complete contention and recovery evidence', asy
 
 test('unknown server errors and raw failures become fixed safe messages', async () => {
   const cases = [
+    [{ ok: false, json: async () => ({ code: 'lock_busy', owner: 'secret' }) }, 'lock_busy'],
     [{ ok: false, json: async () => ({ code: 'stale_runtime', message: 'raw details' }) }, 'stale_runtime'],
     [{ ok: false, json: async () => ({ code: 'sql_error', message: 'secret' }) }, 'runtime_unavailable'],
   ];
@@ -147,6 +148,10 @@ test('unknown server errors and raw failures become fixed safe messages', async 
     await assert.rejects(client.run('runtime.status'), (error) => error.code === code);
   }
 
+  assert.equal(
+    formatRuntimeApiError(new RuntimeApiError('lock_busy')),
+    'Another tenant-changing operation is already running. Wait for it to finish and try again.',
+  );
   assert.equal(
     formatRuntimeApiError(new RuntimeApiError('session_expired')),
     'Your After Party session expired. Sign in again.',

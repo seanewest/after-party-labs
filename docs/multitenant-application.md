@@ -23,7 +23,7 @@ reviewed commits so their contents do not change when the repository branch move
    then paste this command into Cloud Shell:
 
    ```bash
-   bash <(curl -fsSL 'https://raw.githubusercontent.com/seanewest/after-party-labs/df57aa26d01877ac9d58c26c5295818079d721ce/scripts/create-multitenant-app.sh')
+   bash <(curl -fsSL 'https://raw.githubusercontent.com/seanewest/after-party-labs/1dab4b68c4ddad399d6d08d5ec87013925250bda/scripts/create-multitenant-app.sh')
    ```
 
 The script creates and verifies the registration, then prints its Application (client) ID and
@@ -40,7 +40,7 @@ signed-in tenant, then paste this exact-ID command into Cloud Shell:
 AFTER_PARTY_APP_ID='9edaa951-658e-4be2-9623-ee906cb604b2' \
 EXPECTED_TENANT_ID='92563293-315c-4b6c-9b90-bcb47ee8c970' \
 CONFIRM_RECONCILE='9edaa951-658e-4be2-9623-ee906cb604b2' \
-bash <(curl -fsSL 'https://raw.githubusercontent.com/seanewest/after-party-labs/df57aa26d01877ac9d58c26c5295818079d721ce/scripts/create-multitenant-app.sh')
+bash <(curl -fsSL 'https://raw.githubusercontent.com/seanewest/after-party-labs/1dab4b68c4ddad399d6d08d5ec87013925250bda/scripts/create-multitenant-app.sh')
 ```
 
 The script refuses to reconcile by display name. Before changing anything, it verifies the home
@@ -59,6 +59,11 @@ Adding a permission to the developer registration does not grant it in a student
 identity consent during sign-in may create the tenant's enterprise application, but it does not
 grant the broad permissions below. The student installation flow must show that requested access,
 obtain the appropriate consent, and verify the resulting grants.
+
+The registration also exposes `AfterParty.Operate`, an admin-consent-only delegated scope for the
+tenant-owned After Party API. It is preauthorized only for the same official SPA application. This
+scope produces a token whose audience is After Party—not Microsoft Graph—and the SPA sends that
+opaque token only to the verified tenant runtime. It is not an app-only permission or credential.
 
 | Microsoft Graph permission | What After Party can explore |
 | --- | --- |

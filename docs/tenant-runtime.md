@@ -19,6 +19,7 @@ One subscription-scope Bicep deployment owns:
 | Resource group | One clear ownership and teardown boundary for the runtime. |
 | Container Apps environment | Hosts the tenant-side API without a separate cluster. |
 | Container App | Provides the single HTTPS API boundary used by the SPA and live tests. |
+| Container App authentication configuration | Rejects unauthenticated callers and accepts only v2 tokens issued for the verified tenant, After Party API audience, and official SPA client. |
 | User-assigned managed identity | Gives the API a passwordless runtime identity. |
 | Storage account and private `state` blob container | Holds operation status and, in issue #24, the tenant lock. |
 | `Storage Blob Data Contributor` assignment | Lets only the runtime identity read and change that state container. |
@@ -27,16 +28,19 @@ There is no generic job yet because the first operation does not require one. Th
 Key Vault, registry, Log Analytics workspace, simulated-user authentication, Microsoft365DSC
 baseline, or second state system in this slice.
 
-The Container App is an HTTPS shell for the API image pinned in the plan. Issue #23 owns caller and
-tenant authorization inside that API. The live deployment cannot occur until that authorization
-path exists and the deployed image is pinned to a digest from the same commit.
+The Container App is an HTTPS shell for the API image pinned in the plan. Its platform
+authentication validates Microsoft Entra token signatures, issuer, audience, and calling
+application before a request reaches the API. The API then applies the offline-testable contract
+in [`runtime/authorization.mjs`](../runtime/authorization.mjs). A live deployment still requires an
+API image pinned to a digest from the same commit.
 
 ## Preflight contract
 
 [`runtime/bootstrap.mjs`](../runtime/bootstrap.mjs) is the shared, offline-testable contract. A
 caller supplies the operator's explicit selection plus current Azure Resource Manager evidence:
 
-- selected tenant ID, subscription ID, Azure region, resource-group name, and runtime name;
+- selected tenant ID, subscription ID, Azure region, resource-group name, runtime name, and the
+  public After Party application client ID;
 - the full 40-character source commit and a public container image pinned to a SHA-256 digest;
 - the accessible subscription's ID, name, tenant, and state;
 - subscription locations and resource-provider metadata; and
@@ -80,8 +84,38 @@ resource identities.
 
 Success is not inferred from an Azure command exit alone. `verifyRuntimeDeployment` requires a
 `Succeeded` deployment and checks the returned tenant, subscription, region, commit, resource
-group, API, managed identity, state container, and HTTPS API URL against the original plan. Missing
-outputs, partial deployments, and mismatched resources fail closed with a repair message.
+group, API, API authentication configuration, managed identity, state container, and HTTPS API URL
+against the original plan. Missing outputs, partial deployments, and mismatched resources fail
+closed with a repair message.
+
+## Calling the runtime as the signed-in operator
+
+The developer-owned application exposes the admin-consent-only delegated scope
+`api://<application-client-id>/AfterParty.Operate` and preauthorizes only its own public SPA client.
+The SPA asks MSAL for that single runtime token immediately before a call, treats it as opaque, and
+never copies it into a result or application-managed storage.
+
+Container Apps ingress answers browser preflight only for the published SPA origin
+`https://seanewest.github.io`. It allows `POST` and `OPTIONS` with only the `Authorization` and
+`Content-Type` request headers, and it does not allow credential cookies or wildcard origins.
+
+Every request contains exactly one allowlisted operation, a new request ID, and the tenant, runtime
+resource ID, and full commit the SPA believes it is calling. Platform authentication rejects a
+missing or invalid bearer token. The API independently requires:
+
+- a v2 access token for the runtime's exact tenant and application audience;
+- the official After Party client as the authorized party and the `AfterParty.Operate` delegated
+  scope;
+- a non-expired signed-in operator object ID;
+- a verified installation with the same tenant, application, runtime resource, and commit;
+- an allowlisted operation and an exact request match; and
+- a new request ID atomically claimed in the tenant state plane before authorization succeeds.
+
+Expired sessions, wrong tenants, missing installations, insufficient scope, stale commits,
+malformed requests, and replayed request IDs return only fixed error codes and guidance. The SPA
+also verifies successful response identity before showing success. Task #24 supplies the shared
+state implementation used for request claims and the tenant-wide operation lock; Task #25 mounts
+this client contract into the experiment cards.
 
 The Bicep template is compiled in CI. Its code path is intentionally the same one later used by the
 SPA operation and the authorized live test.
@@ -106,6 +140,9 @@ command because no runtime has been authorized for deployment yet.
 ## Microsoft references
 
 - [Managed identities in Azure Container Apps](https://learn.microsoft.com/en-us/azure/container-apps/managed-identity)
+- [Container Apps authentication configuration](https://learn.microsoft.com/en-us/azure/templates/microsoft.app/containerapps/authconfigs)
+- [Expose scopes in a protected web API](https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-configure-app-expose-web-apis)
+- [Validate Microsoft identity platform access tokens](https://learn.microsoft.com/en-us/entra/identity-platform/access-tokens)
 - [Assign an Azure role for Blob data](https://learn.microsoft.com/en-us/azure/storage/blobs/assign-azure-role-data-access)
 - [Azure resource providers and supported locations](https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/resource-providers-and-types)
 - [Azure built-in roles](https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles)

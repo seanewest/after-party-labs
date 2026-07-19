@@ -20,7 +20,7 @@ One subscription-scope Bicep deployment owns:
 | Container Apps environment | Hosts the tenant-side API without a separate cluster. |
 | Container App | Provides the single HTTPS API boundary used by the SPA and live tests. |
 | User-assigned managed identity | Gives the API a passwordless runtime identity. |
-| Storage account and private `state` blob container | Holds operation status and, in issue #24, the tenant lock. |
+| Storage account and private `state` blob container | Holds operation status and the [tenant operation lock](tenant-lock.md). |
 | `Storage Blob Data Contributor` assignment | Lets only the runtime identity read and change that state container. |
 
 There is no generic job yet because the first operation does not require one. There is also no
@@ -85,6 +85,12 @@ outputs, partial deployments, and mismatched resources fail closed with a repair
 
 The Bicep template is compiled in CI. Its code path is intentionally the same one later used by the
 SPA operation and the authorized live test.
+
+Deployment verification also requires the exact tenant lock blob path,
+`locks/tenant-operation.json`. The Container App receives that path as
+`AFTER_PARTY_TENANT_LOCK_BLOB`; a missing or changed value is a partial or mismatched runtime rather
+than a successful install. The lock lifecycle and evidence contract are documented in
+[Tenant operation lock](tenant-lock.md).
 
 ## Ownership and teardown
 

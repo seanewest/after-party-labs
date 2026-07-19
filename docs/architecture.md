@@ -185,6 +185,10 @@ Mocked and offline tests do not need the live tenant lock.
 
 Each installed tenant has one shared operation lock stored in that tenant's Azure resources.
 
+The concrete lock is the fixed `locks/tenant-operation.json` blob in the runtime's private state
+container. Every caller enters through the same operation wrapper and Azure Blob lease adapter.
+There is no caller-specific or development-only lock implementation.
+
 The lock prevents two stateful operations from changing the same tenant at the same time.
 
 The lock must cover the full operation, including:
@@ -196,7 +200,14 @@ The lock must cover the full operation, including:
 - validation;
 - scenario cleanup.
 
-A crashed operation should eventually release the system through lease expiration.
+A finite Azure Blob lease provides exclusive ownership. Active work renews it before expiration and
+normal success or failure releases it immediately. A crashed operation eventually releases the
+system through lease expiration.
+
+The blob's status record identifies only the tenant, operation, caller class, source commit, and
+lease timing. The lease ID, tokens, raw service errors, and user identity are not status evidence.
+A competing caller receives sanitized owner and retry information, and an expired owner cannot
+renew or release a replacement lease. See [Tenant operation lock](tenant-lock.md).
 
 The lock is shared across the student's SPA, GitHub Actions, locally served development SPA, and tenant-side jobs. It is not a central lock hosted by After Party.
 

@@ -119,23 +119,54 @@ the Microsoft and platform integration, not serve as the main browser-developmen
 
 ## Work coordination
 
-Issues are the project's canonical work items. Each issue stays on the Development project through
-implementation and review. A pull request must link its issue, normally with `Closes #<number>`.
-The issue card is authoritative for ownership and status; the pull request records the change,
-validation, and review.
+Issues are the project's canonical work items for board-managed work. Each board-managed issue
+stays on the Development project through implementation and review. The issue card is authoritative
+for ownership and status; the pull request records the change, validation, and review rather than
+becoming another project card.
+
+The `Work Type` single-select field has two values:
+
+- **Story**: a meaningful outcome and its overall acceptance criteria. A Story is not claimed by an
+  agent. Use GitHub sub-issues for the Tasks needed to complete it, without adding deeper hierarchy.
+- **Task**: executable work that an agent may claim. A Task may be a Story sub-issue or standalone.
+
+A pull request in the normal board workflow must link the Task it implements, normally with
+`Closes #<number>`. It should not close the parent Story.
+
+The project board defines the dispatch scope. An issue or pull request without a corresponding
+issue card on the board is not automatically claimed or reviewed. It may be intentionally outside
+the normal workflow; act on it only when the human explicitly asks.
 
 The project uses these statuses:
 
-- **Backlog**: recognized work that is not ready to begin.
-- **Ready**: actionable work that an eligible agent may claim.
-- **In Progress**: the implementing agent has the next action.
-- **Waiting for Human**: progress requires a human decision or action.
-- **Review**: the linked pull request is ready for another agent to review.
-- **Done**: the work has been merged or otherwise completed.
+- **Backlog**: recognized work that is not ready to begin, including a Story still being shaped.
+- **Ready**: an actionable Task that an eligible agent may claim.
+- **In Progress**: a Task's implementing agent has the next action, or an approved Story has been
+  divided into Tasks and work on its outcome is underway.
+- **Waiting for Human**: a Task requires a human decision or action, or a Story is ready for human
+  acceptance against `main` or the deployed application.
+- **Review**: a Task's linked pull request needs agent review, or failed human acceptance of a Story
+  needs agent triage into Tasks.
+- **Done**: a Task has been merged or otherwise completed, or the human has explicitly accepted a
+  Story.
+
+A Story starts in Backlog, moves to In Progress once it is approved and divided into Tasks, and
+moves to Waiting for Human after its required Tasks are Done and its acceptance target is available
+from `main`. Leave a signed comment with the URL or manual action, deployed commit when relevant,
+and concise verification steps. Move the Story to Done and close it only after the human explicitly
+confirms acceptance.
+
+If human acceptance fails, record the reason on the Story and move it to Review. Review means the
+feedback needs agent triage, not that the Story itself is claimed: create or reopen the required
+Tasks, move the Story back to In Progress, and leave its Agent blank. Stories never use Ready.
+
+Until pull request previews exist, merge satisfactory Task pull requests normally and perform Story
+acceptance afterward against `main` or the deployed application.
 
 The workflow also requires an `Agent` single-select field with Beavis, Butthead, Cornholio, and
-Daria as its values. It records the implementing agent, not the current reviewer. A Ready issue
-with no Agent may be claimed by any suitable agent; one with an Agent is reserved for that agent.
+Daria as its values. It records the Task's implementing agent, not the current reviewer. A Ready
+Task with no Agent may be claimed by any suitable agent; one with an Agent is reserved for that
+agent. A Story's Agent remains blank.
 
 ### Checking the board
 
@@ -143,11 +174,18 @@ When the human says `check the board`, run this loop in order until nothing is a
 
 1. Resume owned unfinished work. Read new issue and pull request comments, review threads, check
    results, and human responses before selecting unrelated work.
-2. If no owned item needs action, claim a suitable pull request in Review that was created by
+2. Reconcile Stories affected by Task state changes or human responses. A Story in Review has
+   acceptance feedback to turn into new or reopened Tasks; it is not claimed for implementation.
+3. If no owned item needs action, claim a suitable Task pull request in Review that was created by
    another agent.
-3. If no review is available and there is no unmerged implementation pull request, claim the first
-   compatible Ready issue in board order.
-4. Otherwise stop and tell the human there is no actionable work.
+4. If no review is available and there is no active implementation Task, claim the first compatible
+   Ready Task in board order. Ignore Stories and items without a Work Type.
+5. Otherwise stop and tell the human there is no actionable work.
+
+Whenever an agent changes a Task's state, that agent reconciles its direct parent Story before
+continuing the loop. Keep the Story In Progress while required Tasks remain. After the final required
+Task is Done and the acceptance target is available, move the Story to Waiting for Human. A human
+acceptance failure moves it to Review; an explicit human confirmation moves it to Done.
 
 Run the loop again after an action changes an item's state, including after opening a pull request,
 completing a review, merging, receiving a human answer, or finishing requested changes. Agents do
@@ -155,23 +193,24 @@ not poll continuously; once the loop is empty, wait for the human to say `check 
 
 ### Claiming implementation work
 
-Before substantive work, confirm that the issue is still Ready and its Agent is blank or already
-set to you. Set the Agent to yourself, move the issue to In Progress, and leave a signed claim
-comment, for example:
+Before substantive work, confirm that the issue is a Task, is still Ready, and its Agent is blank
+or already set to you. Set the Agent to yourself, move the Task to In Progress, and leave a signed
+claim comment, for example:
 
     [BEAVIS] Claimed for implementation. Beginning work now.
 
 If another agent has claimed or is reserved for the issue, continue the dispatch loop without
 working on it.
 
-An agent may have only one unmerged implementation pull request at a time. It may review another
-agent's work while its own pull request waits, but it may not claim another Ready issue until its
-pull request is merged, closed, or explicitly reassigned.
+An agent may have only one active implementation Task, and therefore only one unmerged
+implementation pull request, at a time. It may review another agent's work while its own pull
+request waits, but it may not claim another Ready Task until its current Task is completed, closed,
+or explicitly reassigned.
 
 ### Pull requests and review
 
 When implementation and required validation are complete, the implementer links the pull request
-to the issue, marks the pull request ready, moves the issue to Review, and leaves a concise handoff:
+to the Task, marks the pull request ready, moves the Task to Review, and leaves a concise handoff:
 what changed, how it was tested, and anything the reviewer should pay attention to.
 
 An agent must not review its own implementation. Before reviewing another agent's pull request,
@@ -180,13 +219,17 @@ leave a signed comment claiming the review. The Agent field remains set to the i
 The reviewer completes one of these outcomes:
 
 - If the current head is satisfactory and the required checks and evidence are complete, merge the
-  pull request and move the issue to Done.
-- If implementation changes are needed, explain them clearly and move the issue to In Progress.
-- If a human decision or action is needed, explain it clearly and move the issue to Waiting for
+  pull request and move the Task to Done.
+- If implementation changes are needed, explain them clearly and move the Task to In Progress.
+- If a human decision or action is needed, explain it clearly and move the Task to Waiting for
   Human.
 
-The original implementer handles requested changes and returns the issue to Review when it is
+The original implementer handles requested changes and returns the Task to Review when it is
 ready. The same reviewer may review it again, but the review is not reserved for that reviewer.
+
+Merging a Task's pull request completes that Task, not its parent Story. Reconcile the parent Story,
+but close it only after all required Tasks are Done and the human explicitly confirms its acceptance
+criteria.
 
 ### Human attention
 
@@ -195,8 +238,9 @@ it is not a general approval stage. Address the human directly in a short, natur
 says what is needed, why, your recommendation when there is a choice, and what will happen next.
 Do not turn the request into a form or a long agent report.
 
-The Agent remains the implementer. On the next board check, the agent reads the response, moves the
-issue to the appropriate status, and continues. The human does not need to update the project card.
+The Agent remains the implementer for a Task and blank for a Story. On the next board check, the
+agent reads the response, moves the issue to the appropriate status, and continues. The human does
+not need to update the project card.
 
 ### Durable handoffs
 

@@ -263,29 +263,40 @@ or explicitly reassigned.
 
 ### Pull requests and review
 
-When implementation and required validation are complete, the implementer links the pull request
-to the Task, marks the pull request ready, moves the Task to Review, and leaves a concise handoff:
-what changed, how it was tested, and anything the reviewer should pay attention to. If Original
-Agent is blank, set it to the implementer that opened this first implementation pull request. Clear
-Current Agent so an independent reviewer can claim the next action.
+Every Task Status or Current Agent change requires a concise signed comment on the Task. State what
+finished, link the pull request and current head when applicable, and say who owns the next action or
+that it is unclaimed. One comment may describe both field changes from the same action. Keep detailed
+implementation evidence and review findings on the pull request; the Task comment is the durable
+board-transition summary for the human.
 
-An agent must not review its own implementation. Before reviewing another agent's pull request,
-leave a signed comment claiming the review and set Current Agent to yourself. Original Agent
-remains unchanged.
+When implementation and required validation are complete, the implementer links the pull request
+to the Task, marks the pull request ready, and leaves a concise handoff on the pull request: what
+changed, how it was tested, and anything the reviewer should pay attention to. On the Task, leave the
+signed transition summary, move it to Review, and clear Current Agent so an independent reviewer can
+claim the next action. If Original Agent is blank, set it to the implementer that opened this first
+implementation pull request.
+
+An agent must not review its own implementation. Before every review or re-review of a new head,
+leave a fresh signed claim comment on the Task that identifies that head and set Current Agent to
+yourself. Original Agent remains unchanged. A previous review claim does not reserve the next
+re-review.
 
 The reviewer completes one of these outcomes:
 
 - If the current head is satisfactory and the required checks and evidence are complete, merge the
-  pull request, move the Task to Done, and clear Current Agent.
-- If implementation changes are needed, explain them clearly, move the Task to In Progress, and set
-  Current Agent to Original Agent. Use another agent only when the original is unavailable, work is
-  explicitly reassigned, or repeated cycles justify fresh ownership; never change Original Agent.
+  pull request, leave the signed Task transition summary, move the Task to Done, and clear Current
+  Agent.
+- If implementation changes are needed, explain them clearly on the pull request, leave the signed
+  Task transition summary, move the Task to In Progress, and set Current Agent to Original Agent.
+  Use another agent only when the original is unavailable, work is explicitly reassigned, or
+  repeated cycles justify fresh ownership; never change Original Agent.
 - If a human decision or action is needed, explain it clearly, clear Current Agent, and move the
   Task to Waiting for Human.
 
-The Original Agent normally handles requested changes. When it is ready, that agent moves the Task
-to Review and clears Current Agent. The same reviewer may claim it again, but the re-review is not
-reserved for that reviewer.
+The Original Agent normally handles requested changes. When the new head is ready, that agent leaves
+the pull request handoff and signed Task transition summary, moves the Task to Review, and clears
+Current Agent. The same reviewer may claim it again with a fresh signed Task comment, but the
+re-review is not reserved for that reviewer.
 
 Merging a Task's pull request completes that Task, not its parent Story. Reconcile the parent Story,
 but close it only after all required Tasks are Done and the human explicitly confirms its acceptance

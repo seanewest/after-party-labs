@@ -76,17 +76,24 @@ The Microsoft 365 licenses and Azure subscription should belong to the same Entr
 
 ## Tenant-side runtime
 
-The current target is one Container Apps environment containing:
-
-- a thin API;
-- a generic on-demand job;
-- a shared runtime managed identity.
+The minimum runtime is one Container Apps environment containing a thin API and a user-assigned
+runtime managed identity. One Storage account and private Blob container provide the shared state
+plane for operation status and the tenant-wide lock. Bicep owns these resources inside one
+dedicated resource group.
 
 The API receives operation requests, validates the caller, acquires the tenant-wide lock, and either completes short work directly or starts the generic job.
 
-The generic job runs different capabilities based on an approved operation definition. It should not require a separate job architecture for every capability.
+Add the generic on-demand job only when an operation genuinely needs background execution. When it
+is added, it should run different capabilities based on an approved operation definition rather
+than requiring a separate job architecture for every capability.
 
 The API and job may use the same container image with different startup commands when that keeps the system simpler.
+
+Before any runtime deployment, the operator explicitly selects a subscription and region. The
+bootstrap contract verifies the subscription is accessible, enabled, and owned by the signed-in
+tenant; checks current provider support for the region; and proves both resource-deployment and
+role-assignment capability. Install and repair use the same incremental, commit-pinned Bicep
+deployment. See [Tenant runtime bootstrap](tenant-runtime.md).
 
 ## Identities
 

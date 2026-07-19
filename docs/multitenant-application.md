@@ -1,9 +1,12 @@
 # Multitenant application
 
 After Party uses a Microsoft Entra multitenant application as its shared sign-in and
-installation entry point. The lifecycle scripts below are pinned to the tested script commit
-[`d987aaa661a9f7faed0ffa7ebd1be1b8ea068a17`](https://github.com/seanewest/after-party-labs/commit/d987aaa661a9f7faed0ffa7ebd1be1b8ea068a17),
-so the downloaded contents do not change when the repository branch moves.
+installation entry point. This is the developer-owned application registration. A student's
+enterprise application is created later, in the student's tenant, when they approve After Party.
+
+The setup below creates only the developer registration. It does not create a client secret,
+certificate, service principal, or permission grant. The downloaded scripts are pinned to
+reviewed commits so their contents do not change when the repository branch moves.
 
 ## Create the application
 
@@ -14,21 +17,71 @@ so the downloaded contents do not change when the repository branch moves.
    az account show --query '{tenantId:tenantId, subscription:name, user:user.name}' --output table
    ```
 
-3. Review the pinned [create script](https://github.com/seanewest/after-party-labs/blob/d987aaa661a9f7faed0ffa7ebd1be1b8ea068a17/scripts/create-multitenant-app.sh),
+3. Review the pinned [create script](https://github.com/seanewest/after-party-labs/blob/df57aa26d01877ac9d58c26c5295818079d721ce/scripts/create-multitenant-app.sh),
    then paste this command into Cloud Shell:
 
    ```bash
-   bash <(curl -fsSL 'https://raw.githubusercontent.com/seanewest/after-party-labs/d987aaa661a9f7faed0ffa7ebd1be1b8ea068a17/scripts/create-multitenant-app.sh')
+   bash <(curl -fsSL 'https://raw.githubusercontent.com/seanewest/after-party-labs/df57aa26d01877ac9d58c26c5295818079d721ce/scripts/create-multitenant-app.sh')
    ```
 
 The script creates and verifies the registration, then prints its Application (client) ID and
-home tenant ID. Save both values. It does not create a client secret or request API permissions.
+home tenant ID. Save both values. It also configures the production and local SPA redirect URIs
+and the delegated Microsoft Graph permissions listed below.
+
+## Reconcile the existing developer application
+
+Reconciliation changes broad permission settings in the live developer tenant, so run it only
+after that live change has been explicitly authorized. Review the same pinned script, confirm the
+signed-in tenant, then paste this exact-ID command into Cloud Shell:
+
+```bash
+AFTER_PARTY_APP_ID='9edaa951-658e-4be2-9623-ee906cb604b2' \
+EXPECTED_TENANT_ID='92563293-315c-4b6c-9b90-bcb47ee8c970' \
+CONFIRM_RECONCILE='9edaa951-658e-4be2-9623-ee906cb604b2' \
+bash <(curl -fsSL 'https://raw.githubusercontent.com/seanewest/after-party-labs/df57aa26d01877ac9d58c26c5295818079d721ce/scripts/create-multitenant-app.sh')
+```
+
+The script refuses to reconcile by display name. Before changing anything, it verifies the home
+tenant, exact client ID, application object, display name, and absence of a tenant service
+principal. It then applies and verifies the same redirects and permissions used for new
+registrations, and confirms again that no student enterprise application exists.
+
+## Permission boundary
+
+These permissions are intentionally broad while After Party is being explored. They are suitable
+only for an isolated lab tenant controlled by the student or developer. They are delegated
+permissions: work is performed in the context of a signed-in user and remains limited by that
+user's access. They are not app-only permissions for unattended runtime jobs.
+
+Adding a permission to the developer registration does not grant it in a student tenant. The
+student installation flow must show the requested access and obtain the appropriate consent.
+
+| Microsoft Graph permission | What After Party can explore |
+| --- | --- |
+| `User.Read` | Identify the signed-in account. |
+| `Directory.ReadWrite.All` | Read and change general directory objects. |
+| `Application.ReadWrite.All` | Create and manage lab app registrations and enterprise applications. |
+| `Group.ReadWrite.All` | Create and manage lab groups and memberships. |
+| `User.ReadWrite.All` | Create and manage simulated lab users. |
+| `RoleManagement.ReadWrite.Directory` | Create and remove deliberate directory-role assignments. |
+| `Policy.ReadWrite.ConditionalAccess` | Create and remove lab Conditional Access policies. |
+| `AuditLog.Read.All` | Read directory and sign-in audit evidence. |
+| `Reports.Read.All` | Read Microsoft 365 usage and security reports. |
+| `Mail.ReadWrite` | Create and change mail the signed-in user can access. |
+| `Mail.Send` | Generate mail activity as the signed-in user. |
+| `Files.ReadWrite.All` | Create and change files the signed-in user can access. |
+| `Sites.ReadWrite.All` | Create and change SharePoint content the signed-in user can access. |
+| `SecurityEvents.ReadWrite.All` | Read and update security alerts available to the signed-in operator. |
 
 To confirm the registration later:
 
 ```bash
-az ad app list --display-name 'After Party' --query '[].{name:displayName, clientId:appId, audience:signInAudience, redirectUris:spa.redirectUris}' --output jsonc
+az ad app show --id '9edaa951-658e-4be2-9623-ee906cb604b2' --query '{name:displayName, clientId:appId, audience:signInAudience, redirectUris:spa.redirectUris, permissions:requiredResourceAccess}' --output jsonc
 ```
+
+The public, non-secret SPA settings live in [`site/app-config.js`](../site/app-config.js). The
+published and local sites use the same client ID and select the appropriate registered redirect
+URI. A client ID identifies the application; it is not a credential.
 
 ## Delete the application
 
@@ -53,4 +106,5 @@ az ad app list --display-name 'After Party' --query '[].{name:displayName, clien
 
 The script asks for the Application (client) ID, displays the registration it found, requires
 the client ID again as confirmation, deletes the registration, and verifies that it is no longer
-visible.
+visible. This deletes the developer-owned registration. Removing a student's enterprise
+application is a separate student-tenant operation.

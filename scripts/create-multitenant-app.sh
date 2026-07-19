@@ -21,7 +21,6 @@
   azure_service_management_app_id='797f4846-ba00-4fd7-ba43-dac1f8f63013'
   azure_service_management_permission_id='41094075-9dad-400e-a0bd-54e686782033'
   runtime_api_scope_id='5c9bfc9c-4f2e-477d-a572-3d7fabe8542d'
-  runtime_api_role_id='f2b4a169-9f29-48c3-b0db-8c5efc1b895b'
   runtime_api_scope_name='AfterParty.Operate'
   microsoft_graph_permission_names=(
     'User.Read'
@@ -310,14 +309,12 @@
   fi
 
   runtime_api_request_body="$(printf \
-    '{"identifierUris":["api://%s"],"api":{"requestedAccessTokenVersion":2,"oauth2PermissionScopes":[{"adminConsentDescription":"Allow the After Party SPA to call the matching tenant runtime as the signed-in operator.","adminConsentDisplayName":"Operate the After Party tenant runtime","id":"%s","isEnabled":true,"type":"Admin","userConsentDescription":null,"userConsentDisplayName":null,"value":"%s"}],"preAuthorizedApplications":[{"appId":"%s","delegatedPermissionIds":["%s"]}]},"appRoles":[{"allowedMemberTypes":["Application"],"description":"Allow the tenant runtime identity and its federated GitHub workflow to call the matching After Party API.","displayName":"Operate the After Party tenant runtime","id":"%s","isEnabled":true,"origin":"Application","value":"%s"}]}' \
+    '{"identifierUris":["api://%s"],"api":{"requestedAccessTokenVersion":2,"oauth2PermissionScopes":[{"adminConsentDescription":"Allow the After Party SPA to call the matching tenant runtime as the signed-in operator.","adminConsentDisplayName":"Operate the After Party tenant runtime","id":"%s","isEnabled":true,"type":"Admin","userConsentDescription":null,"userConsentDisplayName":null,"value":"%s"}],"preAuthorizedApplications":[{"appId":"%s","delegatedPermissionIds":["%s"]}]},"appRoles":[]}' \
     "$target_app_id" \
     "$runtime_api_scope_id" \
     "$runtime_api_scope_name" \
     "$target_app_id" \
-    "$runtime_api_scope_id" \
-    "$runtime_api_role_id" \
-    "$runtime_api_scope_name")"
+    "$runtime_api_scope_id")"
   az rest \
     --method PATCH \
     --url "$graph_applications_url/$target_object_id" \
@@ -383,10 +380,10 @@
         --output tsv \
         --only-show-errors 2>/dev/null || true
     )"
-    actual_runtime_role_id="$(
+    actual_runtime_role_count="$(
       az ad app show \
         --id "$target_app_id" \
-        --query "appRoles[?value == '$runtime_api_scope_name' && isEnabled && contains(allowedMemberTypes, 'Application')].id | [0]" \
+        --query 'length(appRoles)' \
         --output tsv \
         --only-show-errors 2>/dev/null || true
     )"
@@ -398,7 +395,7 @@
           "$actual_token_version" == '2' &&
           "$actual_runtime_scope_id" == "$runtime_api_scope_id" &&
           "$actual_preauthorized_scope_id" == "$runtime_api_scope_id" &&
-          "$actual_runtime_role_id" == "$runtime_api_role_id" ]]; then
+          "$actual_runtime_role_count" == '0' ]]; then
       verified='true'
       break
     fi

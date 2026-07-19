@@ -5,8 +5,6 @@ const GRAPH = 'https://graph.microsoft.com/v1.0';
 const PROVIDERS = Object.freeze(['Microsoft.App', 'Microsoft.ManagedIdentity', 'Microsoft.Storage']);
 const TERMINAL_STATES = new Set(['Succeeded', 'Failed', 'Canceled']);
 
-export const RUNTIME_API_ROLE_ID = 'f2b4a169-9f29-48c3-b0db-8c5efc1b895b';
-
 export const RUNTIME_GRAPH_APPLICATION_ROLES = Object.freeze({
   'Application.ReadWrite.All': '1bfefb4e-e0b5-418b-a88f-73c46d2cc8e9',
   'AuditLog.Read.All': 'b0afded3-3588-46d8-8b3d-9842eff778da',
@@ -58,7 +56,6 @@ function normalizeConfiguration(configuration) {
     azureScope: scope,
     commit,
     graphScopes: Object.freeze([...(configuration.graphScopes || [])]),
-    runtimeApiRoleId: uuid(configuration.runtimeApiRoleId),
     templateUrl: new URL(configuration.templateUrl, globalThis.location?.href || 'https://example.invalid/').href,
   });
 }
@@ -290,9 +287,8 @@ export function createAzureRuntimeInstaller({
     }, 'runtime_permissions_failed', 'runtime_permissions_failed')).body;
   }
 
-  async function grantRuntimePermissions({ runtime, tenantApplicationServicePrincipalId }) {
+  async function grantRuntimePermissions({ runtime }) {
     const principalId = uuid(runtime?.identityPrincipalId, 'runtime_permissions_failed');
-    const tenantAppId = uuid(tenantApplicationServicePrincipalId, 'runtime_permissions_failed');
     let token;
     try {
       token = await acquireGraphToken(expected.graphScopes);
@@ -314,7 +310,6 @@ export function createAzureRuntimeInstaller({
         appRoleId,
         resourceId: graphPrincipalId,
       })),
-      { name: 'AfterParty.Operate', appRoleId: expected.runtimeApiRoleId, resourceId: tenantAppId },
     ];
 
     for (let attempt = 0; attempt < propagationAttempts; attempt += 1) {
@@ -356,7 +351,6 @@ export function createAzureRuntimeInstaller({
         return Object.freeze({
           ...runtime,
           graphApplicationRoles: Object.freeze(Object.keys(RUNTIME_GRAPH_APPLICATION_ROLES)),
-          runtimeApiRole: 'AfterParty.Operate',
         });
       }
       await delay(2_000);

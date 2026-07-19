@@ -39,15 +39,33 @@ jobs:
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           docker build --file Dockerfile.runtime --tag "$tag" .
           docker push "$tag"
+          runtime_image=$(docker image inspect --format '{{index .RepoDigests 0}}' "$tag")
           docker image rm "$tag"
           docker logout ghcr.io
-          docker pull "$tag"
-          runtime_image=$(docker image inspect --format '{{index .RepoDigests 0}}' "$tag")
           case "$runtime_image" in
             "$image@sha256:"????????????????????????????????????????????????????????????????) ;;
             *) echo "Runtime image did not resolve to one digest" >&2; exit 1 ;;
           esac
           echo "image=$runtime_image" >> "$GITHUB_OUTPUT"
+
+      - name: Require a public runtime package
+        env:
+          RUNTIME_IMAGE: ${{ steps.runtime.outputs.image }}
+        run: |
+          token_url="https://ghcr.io/token?service=ghcr.io&scope=repository:${GITHUB_REPOSITORY,,}/runtime:pull"
+          public=false
+          for _ in 1 2 3 4 5 6; do
+            if curl --fail --silent --show-error --output /dev/null "$token_url"; then
+              public=true
+              break
+            fi
+            sleep 10
+          done
+          if [[ "$public" != true ]]; then
+            echo '::error::The runtime image was published, but the GHCR package is not public. Follow docs/development.md#one-time-ghcr-bootstrap, then rerun this workflow.'
+            exit 1
+          fi
+          docker pull "$RUNTIME_IMAGE"
 
       - name: Build the site
         run: |

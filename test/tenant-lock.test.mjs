@@ -129,7 +129,7 @@ test('exactly one operation owns the tenant lock and contention evidence is sani
   const first = await firstLock.acquire(operation(operationA));
 
   await assert.rejects(
-    secondLock.acquire(operation(operationB, { source: 'github-actions' })),
+    secondLock.acquire(operation(operationB, { source: 'local-spa' })),
     (error) => {
       assert.equal(error.code, 'lock_busy');
       assert.equal(error.evidence.state, 'blocked');
@@ -158,7 +158,7 @@ test('simultaneous acquisitions produce one owner and one blocked caller', async
 
   const attempts = await Promise.allSettled([
     firstLock.acquire(operation(operationA)),
-    secondLock.acquire(operation(operationB, { source: 'github-actions' })),
+    secondLock.acquire(operation(operationB, { source: 'local-spa' })),
   ]);
   const owners = attempts.filter((attempt) => attempt.status === 'fulfilled');
   const blocked = attempts.filter((attempt) => attempt.status === 'rejected');
@@ -316,7 +316,7 @@ test('the diagnostic uses the shared operation boundary and is blocked by real w
       lock: diagnosticLock,
       tenantId,
       operationId: operationB,
-      source: 'github-actions',
+      source: 'local-spa',
       commit,
     }),
     (error) => error.code === 'lock_busy' && error.evidence.owner.operationId === operationA,
@@ -331,14 +331,14 @@ test('the diagnostic uses the shared operation boundary and is blocked by real w
     lock: diagnosticLock,
     tenantId,
     operationId: operationB,
-    source: 'github-actions',
+    source: 'local-spa',
     commit,
   });
   assert.deepEqual(diagnostic.result, {
     state: 'exclusive-lock-confirmed',
     tenantId,
     operationId: operationB,
-    source: 'github-actions',
+    source: 'local-spa',
     commit,
     holdSeconds: 0,
   });
@@ -363,7 +363,7 @@ test('the bounded diagnostic hold window supports a repeatable contention proof'
     lock: firstLock,
     tenantId,
     operationId: operationA,
-    source: 'github-actions',
+    source: 'local-spa',
     commit,
     holdSeconds: 5,
     wait: async (milliseconds) => {

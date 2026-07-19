@@ -70,8 +70,8 @@ function harness({ preflightError } = {}) {
       },
       async grantRuntimePermissions(input) {
         calls.grant += 1;
-        assert.equal(input.tenantApplicationServicePrincipalId, servicePrincipalId);
-        return { ...input.runtime, runtimeApiRole: 'AfterParty.Operate' };
+        assert.deepEqual(Object.keys(input), ['runtime']);
+        return input.runtime;
       },
     },
     runtimeApiFactory(value) {

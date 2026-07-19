@@ -10,8 +10,6 @@ import {
 const tenantId = '11111111-1111-1111-1111-111111111111';
 const applicationId = '22222222-2222-2222-2222-222222222222';
 const operatorId = '33333333-3333-3333-3333-333333333333';
-const runtimeIdentityClientId = '77777777-7777-4777-8777-777777777777';
-const runtimeIdentityPrincipalId = '88888888-8888-4888-8888-888888888888';
 const subscriptionId = '44444444-4444-4444-4444-444444444444';
 const requestId = '55555555-5555-5555-5555-555555555555';
 const commit = 'a'.repeat(40);
@@ -25,8 +23,6 @@ function configuration(overrides = {}) {
     runtimeId,
     commit,
     allowedOperations: ['runtime.status', 'lock.test'],
-    runtimeIdentityClientId,
-    runtimeIdentityPrincipalId,
     ...overrides,
   };
 }
@@ -114,25 +110,6 @@ test('a verified operator is authorized only for the exact tenant runtime and co
   ]);
 });
 
-test('the student runtime identity can enter the same API through its application role', async () => {
-  const { authorizer, claims } = harness();
-  const result = await authorizer.authorize({
-    principal: principal({
-      oid: runtimeIdentityPrincipalId,
-      azp: runtimeIdentityClientId,
-      scp: '',
-      roles: 'AfterParty.Operate',
-    }),
-    request: request({ operation: 'lock.test' }),
-    installation: installation(),
-  });
-
-  assert.equal(result.status, 'authorized');
-  assert.equal(result.operation, 'lock.test');
-  assert.equal(result.callerClass, 'github-federated-runtime');
-  assert.equal(claims[0].operatorId, runtimeIdentityPrincipalId);
-});
-
 test('expired, not-yet-valid, and unauthenticated sessions fail before replay state', async () => {
   for (const entry of [
     { principal: principal({ exp: Math.floor(now / 1000) }), code: 'session_expired' },
@@ -156,7 +133,7 @@ test('issuer, audience, caller application, tenant, and scope claims fail closed
     [principal({ azp: otherTenant }), 'session_invalid'],
     [principal({ tid: otherTenant, iss: `https://login.microsoftonline.com/${otherTenant}/v2.0` }), 'wrong_tenant'],
     [principal({ scp: 'User.Read' }), 'insufficient_scope'],
-    [principal({ oid: runtimeIdentityPrincipalId, azp: runtimeIdentityClientId, scp: '', roles: 'User.Read' }), 'insufficient_scope'],
+    [principal({ azp: '77777777-7777-4777-8777-777777777777', scp: '', roles: 'AfterParty.Operate' }), 'session_invalid'],
   ];
 
   for (const [candidate, code] of cases) {

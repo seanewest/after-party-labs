@@ -116,6 +116,24 @@ test('the public app configuration contains only the reviewed SPA contract', asy
   assert.ok(Array.isArray(runtimeTemplate.resources));
 });
 
+test('Pages refuses to publish a runtime image that students cannot pull anonymously', async () => {
+  const workflow = await readFile(
+    new URL('../.github/workflows/pages.yml', import.meta.url),
+    'utf8',
+  );
+  const development = await readFile(
+    new URL('../docs/development.md', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(workflow, /name: Require a public runtime package/);
+  assert.match(workflow, /ghcr\.io\/token\?service=ghcr\.io/);
+  assert.match(workflow, /docs\/development\.md#one-time-ghcr-bootstrap/);
+  assert.match(workflow, /docker pull "\$RUNTIME_IMAGE"/);
+  assert.match(development, /first run therefore publishes the package and then stops/i);
+  assert.match(development, /visibility cannot be changed back from public/i);
+});
+
 test('the static page provides the shared experiment-card presentation', async () => {
   const index = await readFile(new URL('../site/index.html', import.meta.url), 'utf8');
   const styles = await readFile(new URL('../site/styles.css', import.meta.url), 'utf8');

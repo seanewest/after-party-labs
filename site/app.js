@@ -7,10 +7,7 @@ import {
   createTenantInstallation,
   formatInstallationError,
 } from './installation.js';
-import {
-  createAzureRuntimeInstaller,
-  RUNTIME_API_ROLE_ID,
-} from './azure-runtime.js';
+import { createAzureRuntimeInstaller } from './azure-runtime.js';
 import { mountRuntimeCards } from './runtime-cards.js';
 
 export function createSignInController({ authentication, view }) {
@@ -108,7 +105,6 @@ export function createLazyRuntimeInstaller({ authentication, configuration, fetc
           azureScope: configuration.azureResourceManagerScope,
           commit: configuration.runtime.commit,
           graphScopes: configuration.microsoftGraphDelegatedScopes,
-          runtimeApiRoleId: RUNTIME_API_ROLE_ID,
           templateUrl: configuration.runtime.templateUrl,
         },
         acquireAzureToken: (scope) => authentication.acquireAzureManagementToken(scope),

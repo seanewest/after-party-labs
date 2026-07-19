@@ -153,7 +153,7 @@ export function createRuntimeCardsController({ installer, runtimeApiFactory, mou
     defineExperimentCard({
       id: 'install-tenant-runtime',
       title: 'Install or repair tenant runtime',
-      description: 'Creates or reconciles the tenant-owned Container App API, broad runtime identity, GitHub federation, state storage, and lock in the confirmed Azure subscription.',
+      description: 'Creates or reconciles the tenant-owned Container App API, broad runtime identity, state storage, and lock in the confirmed Azure subscription.',
       requirement: { kind: 'role', label: 'Owner, or Contributor plus Role Based Access Control Administrator' },
       effect: 'write',
       availability: availabilityForInstall,
@@ -164,7 +164,6 @@ export function createRuntimeCardsController({ installer, runtimeApiFactory, mou
         const deployed = await installer.deploy(state.plan);
         state.runtime = await installer.grantRuntimePermissions({
           runtime: deployed,
-          tenantApplicationServicePrincipalId: state.connection.servicePrincipalId,
         });
         refresh();
         return {

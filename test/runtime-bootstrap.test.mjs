@@ -102,10 +102,6 @@ function deploymentOutputs(overrides = {}) {
         },
         identityClientId: { type: 'String', value: identityClientId },
         identityPrincipalId: { type: 'String', value: identityPrincipalId },
-        githubFederationId: {
-          type: 'String',
-          value: `${resourceGroupId}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/after-party-identity/federatedIdentityCredentials/github-development-tenant`,
-        },
         ownerRoleAssignmentId: {
           type: 'String',
           value: `/subscriptions/${subscriptionId}/providers/Microsoft.Authorization/roleAssignments/66666666-6666-4666-8666-666666666666`,
@@ -235,7 +231,6 @@ test('missing runtime attachment or authentication capability fails before mutat
   for (const missingAction of [
     'Microsoft.App/managedEnvironments/join/action',
     'Microsoft.ManagedIdentity/userAssignedIdentities/assign/action',
-    'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write',
     'Microsoft.App/containerApps/authConfigs/read',
     'Microsoft.App/containerApps/authConfigs/write',
   ]) {
@@ -294,7 +289,6 @@ test('a complete deployment is verified against the exact plan identity', () => 
   assert.equal(result.tenantLockBlobPath, 'locks/tenant-operation.json');
   assert.equal(result.identityClientId, identityClientId);
   assert.equal(result.identityPrincipalId, identityPrincipalId);
-  assert.match(result.githubFederationId, /federatedIdentityCredentials\/github-development-tenant$/);
   assert.match(result.ownerRoleAssignmentId, /roleAssignments/i);
   assert.match(result.authConfigId, /authConfigs\/current$/);
   assert.match(result.apiUrl, /^https:/);
@@ -375,8 +369,8 @@ test('the Bicep runtime is minimal, passwordless, stateful, and versioned', asyn
   assert.match(runtime, /apiImage/);
   assert.match(runtime, /unauthenticatedClientAction: 'Return401'/);
   assert.match(runtime, /allowedApplications/);
-  assert.match(runtime, /github-development-tenant/);
-  assert.match(runtime, /environment:development-tenant/);
+  assert.doesNotMatch(runtime, /federatedIdentityCredentials/);
+  assert.doesNotMatch(runtime, /token\.actions\.githubusercontent\.com/);
   assert.match(main, /8e3af657-a8ff-443c-a75c-2fe8c4bcb635/);
   assert.match(runtime, /AFTER_PARTY_API_SCOPE/);
   const corsPolicy = runtime.match(/corsPolicy:\s*\{[\s\S]*?\n        \}/)?.[0] || '';

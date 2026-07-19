@@ -13,25 +13,25 @@ When this document and historical code disagree, this document carries more weig
 After Party has two main entry points:
 
 - a student or operator using the public SPA;
-- an agent or workflow running a live test through GitHub.
+- a developer or agent running a live test through the same SPA path.
 
 Both should enter the same tenant-side operation system.
 
 ```text
-Student using GitHub Pages SPA ──┐
-                                 ├──> After Party API
-GitHub Actions live test ────────┘          │
-                                            ▼
-                                tenant-wide operation lock
-                                            │
-                                            ▼
-                                  generic job or operation
-                                            │
-                                            ▼
-                             Microsoft 365 and Azure changes
+Published or local SPA ──> After Party API
+                                   │
+                                   ▼
+                       tenant-wide operation lock
+                                   │
+                                   ▼
+                         generic job or operation
+                                   │
+                                   ▼
+                    Microsoft 365 and Azure changes
 ```
 
-The main distinction between student use and development use should be how the caller authenticates and starts the operation, not a separate execution architecture.
+Student use and development live testing authenticate and start operations through the same SPA
+contract. GitHub Actions runs offline CI and publishes artifacts; it has no tenant identity.
 
 ## Hosting and ownership
 
@@ -101,13 +101,12 @@ Keep the home and student tenant objects distinct even when development uses one
 
 1. The human bootstrap identity creates or reconciles the project-owned application object.
 2. That multitenant application object exists only in its home tenant and defines the shared client
-   ID, redirects, requested permissions, delegated API scope, and runtime app role.
+   ID, redirects, requested permissions, and delegated API scope.
 3. Each student tenant has its own local enterprise application/service principal for that shared
-   application ID. The student tenant issues API tokens through this local object; the runtime does
-   not contact the home tenant.
-4. The student tenant's runtime managed identity executes downstream work. In this intentionally
-   broad pass, GitHub Actions may federate to the same identity and enter the API through the local
-   enterprise application.
+   application ID. The student tenant issues delegated SPA API tokens through this local object;
+   the runtime does not contact the home tenant.
+4. The student tenant's runtime managed identity executes downstream work. It is not an API caller
+   and has no GitHub federated credential.
 
 In the single development tenant, the application object, its local enterprise application, and
 the runtime managed identity coexist as separate objects with separate object IDs.
@@ -171,11 +170,8 @@ This identity may be used for:
 - starting or coordinating tenant-side work.
 
 The managed identity is created as part of the student-owned Azure infrastructure. It does not
-require another manually maintained app registration. A federated credential scoped to the
-repository's `development-tenant` GitHub environment lets trusted Actions authenticate as this same
-identity. The student tenant then issues an app-only token for its local After Party enterprise
-application, and GitHub enters the same API and lock path as the SPA; neither the API nor Actions
-needs the home-tenant application object at runtime.
+require another manually maintained app registration, a GitHub account, repository access, or a
+GitHub federated credential.
 
 ### Simulated users
 
@@ -209,7 +205,7 @@ caller
 This should apply to:
 
 - student actions from the SPA;
-- GitHub Actions live tests;
+- live tests run through the published or local SPA;
 - infrastructure reconciliation;
 - baseline reconciliation;
 - scenario setup and cleanup;
@@ -245,7 +241,7 @@ lease timing. The lease ID, tokens, raw service errors, and user identity are no
 A competing caller receives sanitized owner and retry information, and an expired owner cannot
 renew or release a replacement lease. See [Tenant operation lock](tenant-lock.md).
 
-The lock is shared across the student's SPA, GitHub Actions, locally served development SPA, and tenant-side jobs. It is not a central lock hosted by After Party.
+The lock is shared across the student's SPA, locally served development SPA, and tenant-side jobs. It is not a central lock hosted by After Party.
 
 ## State and token cache
 
@@ -314,9 +310,11 @@ One specific object should not be placed under competing desired-state systems.
 
 ## Development and live testing
 
-All implementation, coordination, review, and live testing should occur through GitHub.
+All implementation, coordination, and review should occur through GitHub. Live testing uses the
+same SPA path as the student product.
 
-Agents create changes through branches and pull requests. GitHub Actions performs live deployment and validation against the development tenant.
+Agents create changes through branches and pull requests. GitHub Actions performs offline CI and
+publishes the public runtime image and SPA; it has no development-tenant identity.
 
 A PR live test should not assume that the tenant is already in the expected state.
 

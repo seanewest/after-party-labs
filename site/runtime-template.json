@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.45.15.27210",
-      "templateHash": "18237333247965967437"
+      "templateHash": "16346881453095157303"
     }
   },
   "parameters": {
@@ -142,7 +142,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.45.15.27210",
-              "templateHash": "5753017274644142326"
+              "templateHash": "16614380522661331607"
             }
           },
           "parameters": {
@@ -190,21 +190,6 @@
               "name": "[variables('identityName')]",
               "location": "[parameters('location')]",
               "tags": "[union(variables('tags'), createObject('after-party-component', 'runtime-identity'))]"
-            },
-            {
-              "type": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials",
-              "apiVersion": "2023-01-31",
-              "name": "[format('{0}/{1}', variables('identityName'), 'github-development-tenant')]",
-              "properties": {
-                "issuer": "https://token.actions.githubusercontent.com",
-                "subject": "repo:seanewest/after-party-labs:environment:development-tenant",
-                "audiences": [
-                  "api://AzureADTokenExchange"
-                ]
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))]"
-              ]
             },
             {
               "type": "Microsoft.Storage/storageAccounts",
@@ -360,10 +345,6 @@
                           "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), '2023-01-31').clientId]"
                         },
                         {
-                          "name": "AFTER_PARTY_RUNTIME_IDENTITY_PRINCIPAL_ID",
-                          "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), '2023-01-31').principalId]"
-                        },
-                        {
                           "name": "AFTER_PARTY_COMMIT",
                           "value": "[parameters('commit')]"
                         },
@@ -444,8 +425,7 @@
                       ],
                       "defaultAuthorizationPolicy": {
                         "allowedApplications": [
-                          "[parameters('applicationClientId')]",
-                          "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), '2023-01-31').clientId]"
+                          "[parameters('applicationClientId')]"
                         ]
                       }
                     }
@@ -453,8 +433,7 @@
                 }
               },
               "dependsOn": [
-                "[resourceId('Microsoft.App/containerApps', variables('apiName'))]",
-                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))]"
+                "[resourceId('Microsoft.App/containerApps', variables('apiName'))]"
               ]
             }
           ],
@@ -482,10 +461,6 @@
             "identityPrincipalId": {
               "type": "string",
               "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), '2023-01-31').principalId]"
-            },
-            "githubFederationId": {
-              "type": "string",
-              "value": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials', variables('identityName'), 'github-development-tenant')]"
             },
             "stateContainerId": {
               "type": "string",
@@ -547,10 +522,6 @@
     "identityPrincipalId": {
       "type": "string",
       "value": "[if(variables('targetMatches'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('{0}-runtime', parameters('runtimeName'))), '2025-04-01').outputs.identityPrincipalId.value, '')]"
-    },
-    "githubFederationId": {
-      "type": "string",
-      "value": "[if(variables('targetMatches'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('{0}-runtime', parameters('runtimeName'))), '2025-04-01').outputs.githubFederationId.value, '')]"
     },
     "ownerRoleAssignmentId": {
       "type": "string",

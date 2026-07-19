@@ -139,8 +139,8 @@ case "${1:-}:${2:-}:${3:-}" in
       *preAuthorizedApplications*)
         printf '5c9bfc9c-4f2e-477d-a572-3d7fabe8542d\n'
         ;;
-      *appRoles*)
-        printf 'f2b4a169-9f29-48c3-b0db-8c5efc1b895b\n'
+      'length(appRoles)')
+        printf '0\n'
         ;;
       *requiredResourceAccess*)
         if [[ "$query" == *'797f4846-ba00-4fd7-ba43-dac1f8f63013'* ]]; then
@@ -280,7 +280,8 @@ assert_contains "$create_output" 'No client secret, certificate, or service prin
 assert_log_contains 'rest --method POST'
 assert_log_contains 'AfterParty.Operate'
 assert_log_contains 'requestedAccessTokenVersion'
-assert_log_contains 'f2b4a169-9f29-48c3-b0db-8c5efc1b895b'
+assert_log_contains 'appRoles'
+assert_log_excludes 'f2b4a169-9f29-48c3-b0db-8c5efc1b895b'
 assert_log_contains '797f4846-ba00-4fd7-ba43-dac1f8f63013'
 assert_log_contains '41094075-9dad-400e-a0bd-54e686782033'
 assert_log_contains 'http://127.0.0.1:4173/'

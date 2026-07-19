@@ -31,18 +31,6 @@ resource runtimeIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-
   tags: union(tags, { 'after-party-component': 'runtime-identity' })
 }
 
-resource githubFederation 'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials@2023-01-31' = {
-  parent: runtimeIdentity
-  name: 'github-development-tenant'
-  properties: {
-    issuer: 'https://token.actions.githubusercontent.com'
-    subject: 'repo:seanewest/after-party-labs:environment:development-tenant'
-    audiences: [
-      'api://AzureADTokenExchange'
-    ]
-  }
-}
-
 resource stateStorage 'Microsoft.Storage/storageAccounts@2025-01-01' = {
   name: storageName
   location: location
@@ -160,7 +148,6 @@ resource api 'Microsoft.App/containerApps@2025-01-01' = {
             { name: 'AFTER_PARTY_API_SCOPE', value: 'AfterParty.Operate' }
             { name: 'AFTER_PARTY_RUNTIME_ID', value: apiResourceId }
             { name: 'AFTER_PARTY_RUNTIME_IDENTITY_CLIENT_ID', value: runtimeIdentity.properties.clientId }
-            { name: 'AFTER_PARTY_RUNTIME_IDENTITY_PRINCIPAL_ID', value: runtimeIdentity.properties.principalId }
             { name: 'AFTER_PARTY_COMMIT', value: commit }
             { name: 'AFTER_PARTY_STATE_ACCOUNT', value: stateStorage.name }
             { name: 'AFTER_PARTY_STATE_CONTAINER', value: stateContainer.name }
@@ -219,7 +206,6 @@ resource apiAuthentication 'Microsoft.App/containerApps/authConfigs@2025-01-01' 
           defaultAuthorizationPolicy: {
             allowedApplications: [
               applicationClientId
-              runtimeIdentity.properties.clientId
             ]
           }
         }
@@ -234,6 +220,5 @@ output authConfigId string = apiAuthentication.id
 output identityId string = runtimeIdentity.id
 output identityClientId string = runtimeIdentity.properties.clientId
 output identityPrincipalId string = runtimeIdentity.properties.principalId
-output githubFederationId string = githubFederation.id
 output stateContainerId string = stateContainer.id
 output tenantLockBlobPath string = 'locks/tenant-operation.json'

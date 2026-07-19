@@ -11,7 +11,6 @@ import {
 const tenantId = '11111111-1111-1111-1111-111111111111';
 const subscriptionId = '22222222-2222-2222-2222-222222222222';
 const applicationClientId = '33333333-3333-3333-3333-333333333333';
-const tenantAppId = '44444444-4444-4444-8444-444444444444';
 const identityClientId = '55555555-5555-4555-8555-555555555555';
 const identityPrincipalId = '66666666-6666-4666-8666-666666666666';
 const graphPrincipalId = '77777777-7777-4777-8777-777777777777';
@@ -52,7 +51,6 @@ function deployment() {
         identityId: { value: `${resourceGroupId}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/after-party-identity` },
         identityClientId: { value: identityClientId },
         identityPrincipalId: { value: identityPrincipalId },
-        githubFederationId: { value: `${resourceGroupId}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/after-party-identity/federatedIdentityCredentials/github-development-tenant` },
         ownerRoleAssignmentId: { value: `/subscriptions/${subscriptionId}/providers/Microsoft.Authorization/roleAssignments/88888888-8888-4888-8888-888888888888` },
         stateContainerId: { value: `${resourceGroupId}/providers/Microsoft.Storage/storageAccounts/apstate/blobServices/default/containers/state` },
         tenantLockBlobPath: { value: 'locks/tenant-operation.json' },
@@ -72,7 +70,6 @@ function harness({ permissions = [{ actions: ['*'], notActions: [] }] } = {}) {
       azureScope: 'https://management.core.windows.net//user_impersonation',
       commit,
       graphScopes: ['AppRoleAssignment.ReadWrite.All'],
-      runtimeApiRoleId: 'f2b4a169-9f29-48c3-b0db-8c5efc1b895b',
       templateUrl: 'https://example.test/runtime-template.json',
     },
     acquireAzureToken: async () => 'arm-token',
@@ -148,18 +145,15 @@ test('deployment uses the reviewed template and grants every broad runtime role 
   const { installer, armCalls, assignments } = harness();
   const plan = await installer.preflight(request);
   const deployed = await installer.deploy(plan);
-  const runtime = await installer.grantRuntimePermissions({
-    runtime: deployed,
-    tenantApplicationServicePrincipalId: tenantAppId,
-  });
+  const runtime = await installer.grantRuntimePermissions({ runtime: deployed });
   assert.equal(runtime.identityPrincipalId, identityPrincipalId);
   assert.deepEqual(runtime.graphApplicationRoles, Object.keys(RUNTIME_GRAPH_APPLICATION_ROLES));
-  assert.equal(runtime.runtimeApiRole, 'AfterParty.Operate');
-  assert.equal(assignments.length, Object.keys(RUNTIME_GRAPH_APPLICATION_ROLES).length + 1);
+  assert.equal(Object.hasOwn(runtime, 'runtimeApiRole'), false);
+  assert.equal(assignments.length, Object.keys(RUNTIME_GRAPH_APPLICATION_ROLES).length);
   assert.equal(armCalls.some((call) => call.options.method === 'PUT'), true);
 
-  await installer.grantRuntimePermissions({ runtime, tenantApplicationServicePrincipalId: tenantAppId });
-  assert.equal(assignments.length, Object.keys(RUNTIME_GRAPH_APPLICATION_ROLES).length + 1);
+  await installer.grantRuntimePermissions({ runtime });
+  assert.equal(assignments.length, Object.keys(RUNTIME_GRAPH_APPLICATION_ROLES).length);
 });
 
 test('insufficient Azure access fails before any deployment request', async () => {

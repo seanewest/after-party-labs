@@ -62,12 +62,10 @@ identity consent during sign-in may create the tenant's enterprise application, 
 grant the broad permissions below. The student installation flow must show that requested access,
 obtain the appropriate consent, and verify the resulting grants.
 
-The registration also exposes `AfterParty.Operate` as both an admin-consent-only delegated scope
-and an application role for the tenant-owned After Party API. The delegated scope is preauthorized
-only for the same official SPA application. The application role is assigned only to the
-student-owned runtime managed identity, including when GitHub Actions federates as that identity.
-Both paths receive a token from the student tenant for its local enterprise application and enter
-the same tenant API; the API does not contact the application object's home tenant.
+The registration also exposes `AfterParty.Operate` as an admin-consent-only delegated scope for the
+tenant-owned After Party API. The scope is preauthorized only for the same official SPA
+application. The student tenant issues the SPA token through its local enterprise application; the
+API does not contact the application object's home tenant.
 
 The same one-time administrator consent also includes Azure Service Management delegated
 `user_impersonation`. The SPA can therefore request an Azure Resource Manager token silently after

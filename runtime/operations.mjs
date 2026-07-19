@@ -27,7 +27,7 @@ export function createRuntimeOperationExecutor({
       lock,
       tenantId: authorized.tenantId,
       operationId: authorized.requestId,
-      source: authorized.callerClass === 'github-federated-runtime' ? 'github-actions' : 'spa',
+      source: 'spa',
       commit: authorized.commit,
       holdSeconds: 1,
       wait: async () => {
@@ -49,7 +49,7 @@ export function createRuntimeOperationExecutor({
         lock,
         tenantId: authorized.tenantId,
         operationId: randomUUID(),
-        source: authorized.callerClass === 'github-federated-runtime' ? 'github-actions' : 'spa',
+        source: 'spa',
         commit: authorized.commit,
       });
     } catch (error) {
@@ -65,7 +65,7 @@ export function createRuntimeOperationExecutor({
       lock,
       tenantId: authorized.tenantId,
       operationId: randomUUID(),
-      source: authorized.callerClass === 'github-federated-runtime' ? 'github-actions' : 'spa',
+      source: 'spa',
       commit: authorized.commit,
     });
     if (

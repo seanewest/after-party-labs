@@ -36,19 +36,16 @@ assumptions no longer make sense.
 
 ## Shared product and development paths
 
-Development and live testing should use the same underlying operation path as the product
-wherever practical.
-
-The entry point may differ: a student may begin in the SPA, while an agent begins through
-GitHub Actions. After that, avoid separate development-only plumbing unless it is genuinely
-necessary.
+Development and live testing use the same SPA entry point and tenant-runtime operation path as the
+product. GitHub Actions tests code and publishes artifacts, but it has no credential or federated
+identity for the development tenant.
 
 ## Live testing
 
 The development tenant is shared, and its current state should never be assumed.
 
-Before a pull request runs a live test, the environment should be reconciled to the state
-expected by that pull request. Deployment, reconciliation, testing, and cleanup should be
+Before a pull request is tested live through the SPA, the environment should be reconciled to the
+state expected by that pull request. Deployment, reconciliation, testing, and cleanup should be
 protected by the same tenant-wide lock.
 
 This allows different pull requests to take turns using the tenant:
@@ -92,18 +89,26 @@ branch, rather than relying on an outdated branch state.
 
 ## GitHub Actions
 
-GitHub Actions should handle builds, deployments, and live tests, using federated
-authentication rather than long-lived local credentials.
-
-The repository is public for reading, but workflows with access to the `development-tenant`
-environment are collaborator-only privileged code. That environment can federate as the broadly
-authorized student runtime identity and may therefore control the development Azure and Microsoft
-365 tenant. Never approve a privileged workflow run from an untrusted pull request. Keep environment
-approvals and branch protection enabled so arbitrary fork code cannot reach tenant federation.
+GitHub Actions handles offline builds, tests, artifact publication, and Pages deployment. It does
+not authenticate to the development Azure or Microsoft 365 tenant. Live validation is performed
+through the same SPA flow used by a student.
 
 The Pages workflow builds the runtime container from the exact main commit, publishes it to GHCR,
 resolves the immutable digest, and stamps that digest and commit into the site. Pull-request CI
 builds the same Dockerfile without publishing or contacting a live tenant.
+
+### One-time GHCR bootstrap
+
+GitHub Container Registry creates the runtime package as private on its first publication. The
+student-installed Container App must be able to pull the image without a GitHub account, repository
+access, or registry credentials, so the Pages workflow refuses to deploy the site until an
+anonymous pull succeeds.
+
+The first run therefore publishes the package and then stops with a clear error. A repository owner
+must open the `after-party-labs/runtime` package settings, choose **Change visibility**, and confirm
+**Public**. Package visibility cannot be changed back from public, so this remains an explicit human
+bootstrap action. Rerun the failed Pages workflow after the package becomes public. Later runs keep
+verifying anonymous access before publishing a new site version.
 
 Live testing is appropriate when a change needs proof against Microsoft services or affects
 the real tenant path. Changes that do not depend on the live environment should not require

@@ -3,7 +3,6 @@ const COMMIT_PATTERN = /^[0-9a-f]{40}$/i;
 const OPERATION_KIND_PATTERN = /^[a-z][a-z0-9-]{1,62}[a-z0-9]$/;
 const OPERATION_SOURCES = new Set([
   'spa',
-  'github-actions',
   'local-spa',
   'tenant-job',
 ]);

@@ -4,7 +4,6 @@ const OPERATION_PATTERN = /^[a-z][a-z0-9.-]{2,79}$/;
 const RUNTIME_ID_PATTERN = /^\/subscriptions\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/resourceGroups\/[A-Za-z0-9._()\-]+\/providers\/Microsoft\.App\/containerApps\/[a-z0-9-]+$/i;
 
 export const RUNTIME_API_SCOPE_NAME = 'AfterParty.Operate';
-export const RUNTIME_API_ROLE_NAME = 'AfterParty.Operate';
 
 export class RuntimeAuthorizationError extends Error {
   constructor(code, status = 403) {
@@ -52,14 +51,6 @@ function validateConfiguration(configuration) {
   }
   const tenantId = requiredUuid(configuration.tenantId, 'runtime_misconfigured');
   const applicationId = requiredUuid(configuration.applicationId, 'runtime_misconfigured');
-  const runtimeIdentityClientId = requiredUuid(
-    configuration.runtimeIdentityClientId,
-    'runtime_misconfigured',
-  );
-  const runtimeIdentityPrincipalId = requiredUuid(
-    configuration.runtimeIdentityPrincipalId,
-    'runtime_misconfigured',
-  );
   const runtimeId = requiredRuntimeId(configuration.runtimeId, 'runtime_misconfigured');
   const commit = requiredCommit(configuration.commit, 'runtime_misconfigured');
   const operations = Array.isArray(configuration.allowedOperations)
@@ -73,8 +64,6 @@ function validateConfiguration(configuration) {
     commit,
     operations,
     runtimeId,
-    runtimeIdentityClientId,
-    runtimeIdentityPrincipalId,
     tenantId,
   });
 }
@@ -122,7 +111,6 @@ function validatePrincipal(principal, configuration, nowSeconds) {
   const audience = String(claims.aud || '').toLowerCase();
   const authorizedParty = String(claims.azp || '').toLowerCase();
   const scopes = new Set(String(claims.scp || '').split(/\s+/).filter(Boolean));
-  const roles = new Set(String(claims.roles || '').split(/\s+/).filter(Boolean));
   const expiresAt = Number(claims.exp);
   const validAfter = Number(claims.nbf ?? 0);
 
@@ -130,7 +118,7 @@ function validatePrincipal(principal, configuration, nowSeconds) {
     claims.ver !== '2.0' ||
     issuer !== `https://login.microsoftonline.com/${tenantId}/v2.0` ||
     audience !== configuration.applicationId ||
-    ![configuration.applicationId, configuration.runtimeIdentityClientId].includes(authorizedParty)
+    authorizedParty !== configuration.applicationId
   ) {
     fail('session_invalid', 401);
   }
@@ -140,17 +128,11 @@ function validatePrincipal(principal, configuration, nowSeconds) {
   if (tenantId !== configuration.tenantId) {
     fail('wrong_tenant', 403);
   }
-  const delegatedOperator =
-    authorizedParty === configuration.applicationId && scopes.has(RUNTIME_API_SCOPE_NAME);
-  const federatedRuntime =
-    authorizedParty === configuration.runtimeIdentityClientId &&
-    operatorId === configuration.runtimeIdentityPrincipalId &&
-    roles.has(RUNTIME_API_ROLE_NAME);
-  if (!delegatedOperator && !federatedRuntime) {
+  if (!scopes.has(RUNTIME_API_SCOPE_NAME)) {
     fail('insufficient_scope', 403);
   }
   return Object.freeze({
-    callerClass: federatedRuntime ? 'github-federated-runtime' : 'delegated-operator',
+    callerClass: 'delegated-operator',
     expiresAt,
     operatorId,
     tenantId,

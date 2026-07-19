@@ -69,7 +69,6 @@ export function createProductionRuntime({
   const applicationId = required(environment, 'AFTER_PARTY_APPLICATION_ID');
   const runtimeId = required(environment, 'AFTER_PARTY_RUNTIME_ID');
   const runtimeIdentityClientId = required(environment, 'AFTER_PARTY_RUNTIME_IDENTITY_CLIENT_ID');
-  const runtimeIdentityPrincipalId = required(environment, 'AFTER_PARTY_RUNTIME_IDENTITY_PRINCIPAL_ID');
   const commit = required(environment, 'AFTER_PARTY_COMMIT');
   const containerUrl = required(environment, 'AFTER_PARTY_STATE_CONTAINER_URL');
   const credential = createManagedIdentityCredential({
@@ -102,8 +101,6 @@ export function createProductionRuntime({
       runtimeId,
       commit,
       allowedOperations: ['runtime.status', 'lock.test'],
-      runtimeIdentityClientId,
-      runtimeIdentityPrincipalId,
     },
     replayStore,
     now,

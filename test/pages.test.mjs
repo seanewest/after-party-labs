@@ -84,6 +84,16 @@ test('the public app configuration contains only the reviewed SPA contract', asy
   assert.equal(await readFile(path.join(output, 'app-config.js'), 'utf8'), source);
 });
 
+test('the sign-in copy distinguishes identity consent from lab permissions', async () => {
+  const index = await readFile(new URL('../site/index.html', import.meta.url), 'utf8');
+  const app = await readFile(new URL('../site/app.js', import.meta.url), 'utf8');
+
+  assert.match(index, /may add an After Party enterprise application/i);
+  assert.match(index, /does not grant the lab permissions/i);
+  assert.match(app, /No lab-management permissions have been granted yet/);
+  assert.doesNotMatch(index, /does not install After Party or change your tenant/i);
+});
+
 test('buildPages stamps the exact commit and base path', async (t) => {
   const root = await temporaryDirectory(t);
   const source = path.join(root, 'source');

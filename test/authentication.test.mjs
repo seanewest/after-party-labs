@@ -167,7 +167,7 @@ test('account details expose identity and tenant without token data', () => {
 test('authentication failures become concise student-facing messages', () => {
   assert.equal(
     formatAuthenticationError({ errorCode: 'user_cancelled', message: 'sensitive detail' }),
-    'Sign-in was cancelled. Nothing was installed or changed.',
+    'Sign-in was cancelled. No lab-management permissions were granted.',
   );
   assert.equal(
     formatAuthenticationError({ errorCode: 'network_error' }),
@@ -242,7 +242,7 @@ test('the sign-in controller reports state transitions through a mockable view',
     ['render', 'signed-out'],
     ['busy', false],
     ['busy', true],
-    ['error', 'Sign-in was cancelled. Nothing was installed or changed.'],
+    ['error', 'Sign-in was cancelled. No lab-management permissions were granted.'],
     ['busy', false],
   ]);
 });

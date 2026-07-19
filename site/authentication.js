@@ -66,7 +66,7 @@ export function formatAuthenticationError(error) {
   const errorCode = String(error?.errorCode || error?.code || '').toLowerCase();
 
   if (errorCode === 'user_cancelled' || errorCode === 'access_denied') {
-    return 'Sign-in was cancelled. Nothing was installed or changed.';
+    return 'Sign-in was cancelled. No lab-management permissions were granted.';
   }
   if (errorCode === 'interaction_in_progress') {
     return 'A sign-in is already in progress. Finish it or reload this page to try again.';

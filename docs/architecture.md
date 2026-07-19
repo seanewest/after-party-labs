@@ -56,9 +56,9 @@ The multitenant app registration is the shared doorway. It should not become a c
 
 ## Installation
 
-A student visits the official GitHub Pages SPA and signs into the multitenant After Party application using an administrator account for the tenant they want to use.
+A student visits the official GitHub Pages SPA and signs into the multitenant After Party application using an administrator account for the tenant they want to use. The student's first identity consent may create an After Party enterprise application in that tenant with only the basic sign-in grants.
 
-Microsoft creates an After Party enterprise application in that tenant when the required consent is granted.
+The later installation step requests the explicit lab-management permissions. It reuses the same enterprise application and verifies the required grants before reporting the tenant as installed.
 
 The signed-in operator can then use the SPA to:
 
@@ -102,7 +102,9 @@ During this exploratory stage, its permissions may be broader than the eventual 
 The static site receives the application's public client ID, organizational authority, redirect
 URI, and reviewed delegated-scope list through public configuration. These values identify the
 OAuth client and are not credentials. Student consent, rather than the static configuration,
-creates the enterprise application and grants delegated access in a student tenant.
+creates the enterprise application and grants delegated access in a student tenant. Identity
+consent may create it during the first sign-in; installation consent later adds the reviewed
+lab-management permissions.
 
 The SPA is a public client. It must never contain:
 

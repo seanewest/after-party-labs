@@ -76,7 +76,7 @@ function createView() {
         accountUsername.textContent = account.username;
         tenantId.textContent = account.tenantId;
         status.textContent =
-          'Signed in. Confirm this is the isolated tenant you want to use. After Party has not been installed yet.';
+          'Signed in. Confirm this is the isolated tenant you want to use. No lab-management permissions have been granted yet.';
         status.dataset.kind = 'success';
       } else if (state.status === 'select-account') {
         select.replaceChildren(

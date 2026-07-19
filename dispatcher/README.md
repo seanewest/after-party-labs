@@ -1,8 +1,8 @@
 # Dispatcher queue core
 
-This directory contains the local, durable handoff queue from Task #35. It deliberately does not
-attach to Codex sessions or poll GitHub; Tasks #36 and #37 implement those adapters against this
-core.
+This directory contains the local, durable handoff queue from Task #35 and the GitHub feedback
+adapter from Task #37. It deliberately does not attach to Codex sessions; Task #36 implements that
+runner against this core.
 
 ## Delivery contract
 
@@ -31,15 +31,16 @@ sessions and updating these records.
 
 Escalations are durable, deduplicated records for worker unavailability, ambiguous ownership,
 repeated review cycles, delivery failures, or a manual intervention. They remain assigned
-conceptually to Morpheus without silently changing a Task's `Agent`. Task #37 may create them when
-GitHub routing cannot safely choose a recipient, while Task #36 may create them when a worker is
-genuinely unavailable.
+conceptually to Morpheus without silently changing a Task's `Original Agent`. Task #37 may create
+them when GitHub routing cannot safely choose a recipient, while Task #36 may create them when a
+worker is genuinely unavailable.
 
 ## Extension points
 
 - A session runner calls `claimNext`, `beginDelivery`, `recordReceipt`, and `acknowledge`.
 - A session runner calls `setWorkerAvailability` with its independently observed lifecycle state.
-- A GitHub event source calls `enqueue` with a durable `dedupeKey` derived from the source event.
+- The GitHub poller records source events and advances each source checkpoint in one SQLite
+  transaction, then calls `enqueue` with a durable `dedupeKey` derived from the GitHub event ID.
 - Either adapter calls `createEscalation`; Morpheus inspects and resolves the durable record.
 - Both adapters may create separate `DispatcherQueue` instances against the same SQLite file;
   `BEGIN IMMEDIATE` transactions and conditional state changes serialize competing consumers.
@@ -49,3 +50,24 @@ The default database is `${XDG_STATE_HOME:-~/.local/state}/after-party/dispatche
 
 Run `npm run party -- help` for the compact CLI, `npm run check:types` for static checks, and
 `npm run test:dispatcher` for the offline queue suite.
+
+## GitHub feedback polling
+
+`npm run poll:github -- --owner seanewest --project 1` runs one bounded polling pass using the
+locally authenticated `gh` CLI. An external scheduler may invoke the same command again; the
+poller itself does not become a persistent service.
+
+Only active board Tasks in **In Progress** or **Review** and their linked pull requests are in
+scope. The poller follows pages for review submissions, inline review comments, and pull-request
+conversation comments. It records every valid source event before advancing that source's durable
+checkpoint. Queue insertion uses the stable GitHub source ID as its deduplication key, so a crash
+between enqueueing and marking the event routed is safe to retry.
+
+Actionable signed feedback returns to the Task's sticky `Original Agent`; the mutable `Current Agent`
+does not affect routing. The poller ignores the implementer's own
+comments, approvals, and informational updates. A signed conversation comment is actionable when
+it explicitly names the implementer or uses clear change-request language; inline review comments
+and signed changes-requested reviews are actionable directly. Busy and sleeping workers retain
+their queued work. Missing or ambiguous board ownership, unavailable workers, source failures, and
+three changes-requested review cycles create durable Morpheus escalations without changing the
+board's `Original Agent` field.

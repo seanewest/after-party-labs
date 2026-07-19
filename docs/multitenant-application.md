@@ -133,5 +133,100 @@ the test enterprise application before running that developer bootstrap command 
 
 The script asks for the Application (client) ID, displays the registration it found, requires
 the client ID again as confirmation, deletes the registration, and verifies that it is no longer
-visible. This deletes the developer-owned registration. Removing a student's enterprise
-application is a separate student-tenant operation.
+visible. This deletes the developer-owned registration.
+
+## Uninstall it from a student tenant
+
+Student uninstall removes the tenant-local enterprise application and its grants. It must not use
+the developer teardown command above, which deletes the shared application registration.
+
+Open Azure Cloud Shell in the student tenant and verify the signed-in tenant ID. Then review
+[`uninstall-student-enterprise-app.sh`](../scripts/uninstall-student-enterprise-app.sh) and run:
+
+```bash
+AFTER_PARTY_APP_ID='9edaa951-658e-4be2-9623-ee906cb604b2' \
+EXPECTED_TENANT_ID='<student-tenant-id>' \
+CONFIRM_STUDENT_UNINSTALL='9edaa951-658e-4be2-9623-ee906cb604b2' \
+bash scripts/uninstall-student-enterprise-app.sh
+```
+
+The script requires exactly one enterprise application with the expected client ID, developer
+tenant, display name, and application type. It explicitly removes delegated grants and app-role
+assignments, deletes only that service principal, and verifies its absence. If the student tenant
+is also the developer tenant, it records the developer registration's object ID before uninstall
+and verifies that the same registration still exists afterward.
+
+The command is intentionally not idempotent after success: a second run stops because there is no
+enterprise application to remove. Reconnect through the published SPA to create or reconcile the
+same tenant-local enterprise application and grants again.
+
+## Prove same-tenant connect, uninstall, and reconnect
+
+This proof changes live Entra state. Obtain explicit human authorization before starting, use the
+shared live-testing lock when one is available, and run it only in the isolated development tenant.
+Do not preserve access tokens or full Graph responses as evidence.
+
+1. Confirm the commit currently published by GitHub Pages:
+
+   ```bash
+   curl -fsSL 'https://seanewest.github.io/after-party-labs/version.json'
+   ```
+
+   Record the full `commit` value. The site footer must show the same value.
+
+2. In Azure Cloud Shell, select the development tenant and prove the developer registration exists
+   while the tenant-local enterprise application does not:
+
+   ```bash
+   az account show --query '{tenantId:tenantId,user:user.name}' --output table
+   az ad app list --app-id '9edaa951-658e-4be2-9623-ee906cb604b2' \
+     --query '[].{objectId:id,clientId:appId,name:displayName,audience:signInAudience}' --output table
+   az ad sp list --filter "appId eq '9edaa951-658e-4be2-9623-ee906cb604b2'" \
+     --query 'length(@)' --output tsv
+   ```
+
+   Stop unless the app query returns exactly the expected developer registration and the service
+   principal count is numeric zero. If a previous student installation exists, use the student
+   uninstall command above only after its separate destructive action is authorized.
+
+3. Open the [published SPA](https://seanewest.github.io/after-party-labs/), sign in with the
+   development-tenant administrator, confirm the displayed tenant ID, review the permission list,
+   and choose **Approve lab permissions**. Continue only when the SPA reports the same tenant as
+   connected.
+
+4. Independently prove that the original app registration and exactly one derived enterprise
+   application coexist, that the tenant-wide delegated grant exists, and that no app-only grant
+   exists:
+
+   ```bash
+   app_id='9edaa951-658e-4be2-9623-ee906cb604b2'
+   az ad app list --app-id "$app_id" \
+     --query '[].{objectId:id,clientId:appId,name:displayName,audience:signInAudience}' --output table
+   az ad sp list --filter "appId eq '$app_id'" \
+     --query '[].{objectId:id,clientId:appId,ownerTenant:appOwnerOrganizationId,name:displayName,type:servicePrincipalType}' \
+     --output table
+   sp_id="$(az ad sp list --filter "appId eq '$app_id'" --query '[0].id' --output tsv)"
+   az rest --method GET \
+     --url "https://graph.microsoft.com/v1.0/oauth2PermissionGrants?\$filter=clientId%20eq%20%27${sp_id}%27&\$select=consentType,principalId,resourceId,scope" \
+     --query 'value[].{consentType:consentType,principalId:principalId,resourceId:resourceId,scope:scope}' \
+     --output table
+   az rest --method GET \
+     --url "https://graph.microsoft.com/v1.0/servicePrincipals/${sp_id}/appRoleAssignments?\$select=id" \
+     --query 'length(value)' --output tsv
+   ```
+
+   The SPA performs the strict grant check; this independent output is sanitized corroborating
+   evidence. The app-role assignment count must be numeric zero.
+
+5. Run the student uninstall command above. Verify that it reports the original developer app
+   registration object ID as preserved, then repeat the two `az ad app list` and `az ad sp list`
+   checks from step 2. The registration must still be the same object and the service-principal
+   count must be zero.
+
+6. Repeat step 3, then step 4. Reconnection must reuse the developer registration, create exactly
+   one tenant-local enterprise application, restore the complete delegated grant, and return the
+   SPA to the connected state.
+
+Record only the deployed commit, tenant ID, developer application object ID, enterprise application
+object IDs before uninstall and after reconnect, numeric counts, and the SPA's visible result. Do
+not record tokens, browser storage, consent callback URLs, or unsanitized Graph responses.

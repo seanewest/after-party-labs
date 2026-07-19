@@ -145,8 +145,8 @@ The project uses these statuses:
   divided into Tasks and work on its outcome is underway.
 - **Waiting for Human**: a Task requires a human decision or action, or a Story is ready for human
   acceptance against `main` or the deployed application.
-- **Review**: a Task's linked pull request needs agent review, or failed human acceptance of a Story
-  needs agent triage into Tasks.
+- **Review**: a Task's linked pull request needs agent review, or a Story needs proposal review or
+  triage after failed human acceptance.
 - **Done**: a Task has been merged or otherwise completed, or the human has explicitly accepted a
   Story.
 
@@ -156,9 +156,9 @@ from `main`. Leave a signed comment with the URL or manual action, deployed comm
 and concise verification steps. Move the Story to Done and close it only after the human explicitly
 confirms acceptance.
 
-If human acceptance fails, record the reason on the Story and move it to Review. Review means the
-feedback needs agent triage, not that the Story itself is claimed: create or reopen the required
-Tasks, move the Story back to In Progress, and leave its Agent blank. Stories never use Ready.
+If human acceptance fails, record the reason on the Story and move it to Review. Create or reopen
+the required Tasks, move the Story back to In Progress, and leave its Agent blank. A Story in Review
+is reviewed or reconciled, never claimed for implementation. Stories never use Ready.
 
 Until pull request previews exist, merge satisfactory Task pull requests normally and perform Story
 acceptance afterward against `main` or the deployed application.
@@ -168,14 +168,37 @@ Daria as its values. It records the Task's implementing agent, not the current r
 Task with no Agent may be claimed by any suitable agent; one with an Agent is reserved for that
 agent. A Story's Agent remains blank.
 
+### Reviewing a Story proposal
+
+While a Story is being shaped, keep it and its proposed Tasks in Backlog. When it is ready for
+review, move the Story to Review and leave this comment:
+
+    [HUMAN] Ready for proposal review.
+
+An agent that did not draft the proposal claims the review with a signed comment. The Story's Agent
+remains blank. The reviewer checks that:
+
+- the outcome and acceptance criteria are clear and testable;
+- the Tasks cover the outcome without unnecessary scope;
+- parallel Tasks have independent ownership boundaries;
+- dependent Tasks say `Depends on #<number>`; and
+- required human actions, live validation, and safety boundaries are represented.
+
+Record the approved parallel groups and dependency order in a signed Story comment. On approval,
+move the Story to In Progress, move immediately actionable Tasks to Ready, and keep dependent Tasks
+in Backlog. If the proposal needs a human decision, move the Story to Waiting for Human and ask one
+clear question. If it is not ready for approval, explain the required changes and move it to
+Backlog. The human may revise it and submit it for Review again.
+
 ### Checking the board
 
 When the human says `check the board`, run this loop in order until nothing is actionable:
 
 1. Resume owned unfinished work. Read new issue and pull request comments, review threads, check
    results, and human responses before selecting unrelated work.
-2. Reconcile Stories affected by Task state changes or human responses. A Story in Review has
-   acceptance feedback to turn into new or reopened Tasks; it is not claimed for implementation.
+2. Reconcile Stories affected by Task state changes or human responses. A Story in Review needs
+   proposal review or failed-acceptance triage; claim the review with a signed comment but leave its
+   Agent blank.
 3. If no owned item needs action, claim a suitable Task pull request in Review that was created by
    another agent.
 4. If no review is available and there is no active implementation Task, claim the first compatible
@@ -185,7 +208,9 @@ When the human says `check the board`, run this loop in order until nothing is a
 Whenever an agent changes a Task's state, that agent reconciles its direct parent Story before
 continuing the loop. Keep the Story In Progress while required Tasks remain. After the final required
 Task is Done and the acceptance target is available, move the Story to Waiting for Human. A human
-acceptance failure moves it to Review; an explicit human confirmation moves it to Done.
+acceptance failure moves it to Review; an explicit human confirmation moves it to Done. When a Task
+becomes Done, move any dependent Task held only by completed `Depends on` Tasks from Backlog to
+Ready.
 
 Run the loop again after an action changes an item's state, including after opening a pull request,
 completing a review, merging, receiving a human answer, or finishing requested changes. Agents do

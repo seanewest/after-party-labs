@@ -2,12 +2,25 @@
   "name": "after-party-labs",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "bin": {
+    "party-dispatcher": "dispatcher/cli.ts"
+  },
   "scripts": {
     "build:pages": "node scripts/build-pages.mjs --source site --output dist --commit local --base-path /after-party-labs/",
+    "check:types": "tsc --noEmit",
     "dev": "node scripts/serve-pages.mjs",
+    "party": "node dispatcher/cli.ts",
+    "test:dispatcher": "node --test test/dispatcher-*.test.ts",
     "test": "node --test"
   },
   "dependencies": {
     "@azure/msal-browser": "5.17.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "typescript": "7.0.2"
   }
 }

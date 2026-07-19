@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import process from "node:process";
-import { pathToFileURL } from "node:url";
 
 import { defaultDispatcherDatabasePath } from "./paths.ts";
 import {
@@ -463,7 +462,7 @@ Delivery is at-least-once. Stable message IDs and durable receipts make retries
 recognizable; exactly-once prompt delivery is not claimed.
 `;
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (import.meta.main) {
   try {
     process.exitCode = runCli();
   } catch (error) {

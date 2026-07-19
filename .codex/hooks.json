@@ -1,5 +1,5 @@
 {
-  "description": "After Party named-worker lifecycle hooks. Task #38 installs and trusts this reviewed template.",
+  "description": "After Party named-worker lifecycle hooks.",
   "hooks": {
     "SessionStart": [
       {

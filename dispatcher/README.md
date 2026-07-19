@@ -35,10 +35,10 @@ Machine-specific worktree paths, Codex session IDs, and activity state live in
 
 ## Lifecycle hook boundary
 
-The reviewed hook implementation is `hooks/lifecycle.ts`; `hooks/hooks.json` is a non-active
-installation template. Task #38 owns copying or linking that definition into a supported Codex hook
-location and completing the required trust review. Task #36 does not bypass or pre-approve hook
-trust.
+The reviewed hook implementation is `hooks/lifecycle.ts`; the project-local installation is
+`../.codex/hooks.json`. Codex skips these commands until the human reviews and trusts their exact
+definitions through `/hooks`. New or changed definitions require a fresh trust review. The
+dispatcher never uses `--dangerously-bypass-hook-trust`.
 
 The trusted `SessionStart`, `UserPromptSubmit`, and `Stop` events register the named session and set
 idle/busy state without scraping terminal output. A dispatcher prompt includes an

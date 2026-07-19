@@ -2,7 +2,6 @@
 
 import process from "node:process";
 import { readFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
 
 import { defaultDispatcherDatabasePath } from "./paths.ts";
 import { DispatcherQueue } from "./queue.ts";
@@ -254,7 +253,7 @@ as its sole client through structured Codex JSON events. The next agent attach r
 that session with the queued turn visible.
 `;
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (import.meta.main) {
   try {
     process.exitCode = await runParty();
   } catch (error) {

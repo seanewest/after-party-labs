@@ -4,6 +4,11 @@
 
 After Party is a future cybersecurity lab platform for Microsoft 365 and Azure. It is being built to let learners connect an isolated tenant, create realistic organizational activity and misconfigurations, and investigate what happened using Microsoft security tools.
 
+> **Security notice:** This repository is publicly readable, but its privileged workflows are
+> intended only for trusted collaborators. Authorized GitHub Actions may modify the After Party
+> development Microsoft 365 and Azure tenant. Never approve privileged workflow execution for an
+> untrusted pull request.
+
 The project is under active development. [Visit the current website.](https://seanewest.github.io/after-party-labs/)
 
 ## Run it locally

@@ -1,0 +1,248 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import {
+  createAuthentication,
+  describeAccount,
+  formatAuthenticationError,
+} from '../site/authentication.js';
+import { createSignInController } from '../site/app.js';
+
+const configuration = {
+  authority: 'https://login.microsoftonline.com/organizations',
+  clientId: '9edaa951-658e-4be2-9623-ee906cb604b2',
+  redirectUri: 'https://example.test/after-party/',
+};
+
+function account(overrides = {}) {
+  return {
+    homeAccountId: 'home-account-1',
+    name: 'Ada Lovelace',
+    username: 'ada@example.test',
+    tenantId: 'tenant-1',
+    ...overrides,
+  };
+}
+
+function fakeMsal({ accounts = [], activeAccount = null, redirectResult = null } = {}) {
+  const calls = [];
+  let selectedAccount = activeAccount;
+  let receivedConfiguration;
+  const client = {
+    async initialize() {
+      calls.push(['initialize']);
+    },
+    async handleRedirectPromise() {
+      calls.push(['handleRedirectPromise']);
+      return redirectResult;
+    },
+    getAllAccounts() {
+      return accounts;
+    },
+    getActiveAccount() {
+      return selectedAccount;
+    },
+    setActiveAccount(value) {
+      calls.push(['setActiveAccount', value]);
+      selectedAccount = value;
+    },
+    async loginRedirect(request) {
+      calls.push(['loginRedirect', request]);
+    },
+    async logoutRedirect(request) {
+      calls.push(['logoutRedirect', request]);
+    },
+  };
+
+  return {
+    calls,
+    createPublicClientApplication(value) {
+      receivedConfiguration = value;
+      return client;
+    },
+    configuration() {
+      return receivedConfiguration;
+    },
+  };
+}
+
+test('authentication uses organizational sign-in and session-scoped MSAL caching', async () => {
+  const msal = fakeMsal();
+  const authentication = createAuthentication({
+    configuration,
+    createPublicClientApplication: msal.createPublicClientApplication,
+  });
+
+  assert.deepEqual(await authentication.initialize(), {
+    status: 'signed-out',
+    account: null,
+    accounts: [],
+  });
+  assert.deepEqual(msal.configuration(), {
+    auth: {
+      clientId: configuration.clientId,
+      authority: configuration.authority,
+      redirectUri: configuration.redirectUri,
+      postLogoutRedirectUri: configuration.redirectUri,
+      navigateToLoginRequestUrl: false,
+    },
+    cache: { cacheLocation: 'sessionStorage' },
+  });
+});
+
+test('redirect completion selects and reports the returned account', async () => {
+  const selected = account();
+  const msal = fakeMsal({ accounts: [selected], redirectResult: { account: selected } });
+  const authentication = createAuthentication({
+    configuration,
+    createPublicClientApplication: msal.createPublicClientApplication,
+  });
+
+  const state = await authentication.initialize();
+
+  assert.equal(state.status, 'signed-in');
+  assert.equal(state.account, selected);
+  assert.deepEqual(msal.calls.at(-1), ['setActiveAccount', selected]);
+});
+
+test('one cached account resumes while multiple accounts require an explicit choice', async () => {
+  const first = account();
+  const second = account({ homeAccountId: 'home-account-2', username: 'grace@example.test' });
+  const singleMsal = fakeMsal({ accounts: [first] });
+  const singleAuthentication = createAuthentication({
+    configuration,
+    createPublicClientApplication: singleMsal.createPublicClientApplication,
+  });
+  assert.equal((await singleAuthentication.initialize()).account, first);
+
+  const multipleMsal = fakeMsal({ accounts: [first, second] });
+  const multipleAuthentication = createAuthentication({
+    configuration,
+    createPublicClientApplication: multipleMsal.createPublicClientApplication,
+  });
+  assert.equal((await multipleAuthentication.initialize()).status, 'select-account');
+  assert.equal(multipleAuthentication.selectAccount(second.homeAccountId).account, second);
+});
+
+test('sign-in requests only identity scopes and always shows account selection', async () => {
+  const msal = fakeMsal();
+  const authentication = createAuthentication({
+    configuration,
+    createPublicClientApplication: msal.createPublicClientApplication,
+  });
+
+  await authentication.signIn();
+
+  assert.deepEqual(msal.calls.at(-1), [
+    'loginRedirect',
+    { scopes: ['openid', 'profile', 'email'], prompt: 'select_account' },
+  ]);
+});
+
+test('sign-out targets only the selected account', async () => {
+  const selected = account();
+  const msal = fakeMsal({ accounts: [selected], activeAccount: selected });
+  const authentication = createAuthentication({
+    configuration,
+    createPublicClientApplication: msal.createPublicClientApplication,
+  });
+
+  await authentication.signOut();
+
+  assert.deepEqual(msal.calls.at(-1), [
+    'logoutRedirect',
+    { account: selected, postLogoutRedirectUri: configuration.redirectUri },
+  ]);
+});
+
+test('account details expose identity and tenant without token data', () => {
+  assert.deepEqual(describeAccount(account()), {
+    displayName: 'Ada Lovelace',
+    username: 'ada@example.test',
+    tenantId: 'tenant-1',
+    homeAccountId: 'home-account-1',
+  });
+});
+
+test('authentication failures become concise student-facing messages', () => {
+  assert.equal(
+    formatAuthenticationError({ errorCode: 'user_cancelled', message: 'sensitive detail' }),
+    'Sign-in was cancelled. Nothing was installed or changed.',
+  );
+  assert.equal(
+    formatAuthenticationError({ errorCode: 'network_error' }),
+    'Microsoft sign-in could not be reached. Check your connection and try again.',
+  );
+  assert.equal(
+    formatAuthenticationError(new Error('sensitive detail')),
+    'Microsoft sign-in could not be completed. Try again.',
+  );
+});
+
+test('unsafe redirect URIs fail before MSAL is created', () => {
+  let created = false;
+  assert.throws(
+    () =>
+      createAuthentication({
+        configuration: { ...configuration, redirectUri: 'http://example.test/' },
+        createPublicClientApplication() {
+          created = true;
+        },
+      }),
+    /must use HTTPS/,
+  );
+  assert.equal(created, false);
+});
+
+test('a non-organizational authority fails before MSAL is created', () => {
+  assert.throws(
+    () =>
+      createAuthentication({
+        configuration: {
+          ...configuration,
+          authority: 'https://login.microsoftonline.com/consumers',
+        },
+        createPublicClientApplication() {
+          throw new Error('should not be called');
+        },
+      }),
+    /organizations authority/,
+  );
+});
+
+test('the sign-in controller reports state transitions through a mockable view', async () => {
+  const events = [];
+  const controller = createSignInController({
+    authentication: {
+      async initialize() {
+        return { status: 'signed-out', account: null, accounts: [] };
+      },
+      async signIn() {
+        throw { errorCode: 'user_cancelled' };
+      },
+    },
+    view: {
+      setBusy(value) {
+        events.push(['busy', value]);
+      },
+      render(state) {
+        events.push(['render', state.status]);
+      },
+      renderError(message) {
+        events.push(['error', message]);
+      },
+    },
+  });
+
+  await controller.initialize();
+  await controller.signIn();
+
+  assert.deepEqual(events, [
+    ['busy', true],
+    ['render', 'signed-out'],
+    ['busy', false],
+    ['busy', true],
+    ['error', 'Sign-in was cancelled. Nothing was installed or changed.'],
+    ['busy', false],
+  ]);
+});

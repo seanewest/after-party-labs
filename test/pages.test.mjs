@@ -42,6 +42,14 @@ test('buildPages stamps the exact commit and base path', async (t) => {
     JSON.parse(await readFile(path.join(output, 'version.json'), 'utf8')),
     { commit: 'abc123', basePath: '/after-party-labs/' },
   );
+  assert.match(
+    await readFile(path.join(output, 'vendor', 'msal-browser.min.js'), 'utf8'),
+    /@azure\/msal-browser v5\.17\.1/,
+  );
+  assert.match(
+    await readFile(path.join(output, 'vendor', 'msal-browser.LICENSE.txt'), 'utf8'),
+    /MIT License/,
+  );
 });
 
 test('local source identity fails closed for modified and untracked files', async (t) => {

@@ -6,52 +6,68 @@
     <meta name="after-party-commit" content="__AFTER_PARTY_COMMIT__">
     <base href="__AFTER_PARTY_BASE_PATH__">
     <title>After Party — Microsoft 365 and Azure cybersecurity labs</title>
-    <style>
-      :root {
-        color-scheme: dark;
-        font-family: system-ui, sans-serif;
-        background: #10131a;
-        color: #f5f7ff;
-      }
-
-      body {
-        display: grid;
-        min-height: 100vh;
-        margin: 0;
-        place-items: center;
-      }
-
-      main {
-        width: min(42rem, calc(100% - 3rem));
-      }
-
-      h1 {
-        margin-bottom: 0.5rem;
-        font-size: clamp(2.5rem, 8vw, 5rem);
-      }
-
-      p {
-        color: #c9d1e5;
-        font-size: 1.125rem;
-        line-height: 1.6;
-      }
-
-      .status {
-        font-size: 1rem;
-      }
-
-      code {
-        overflow-wrap: anywhere;
-        color: #9ec5ff;
-      }
-    </style>
+    <link rel="stylesheet" href="styles.css">
+    <script src="app-config.js" defer></script>
+    <script src="vendor/msal-browser.min.js" defer></script>
+    <script type="module" src="app.js"></script>
   </head>
   <body>
     <main>
-      <h1>After Party</h1>
-      <p>A future cybersecurity lab platform for Microsoft 365 and Azure.</p>
-      <p class="status">Currently under active development.</p>
-      <p class="status">Deployed commit: <code>__AFTER_PARTY_COMMIT__</code></p>
+      <header class="hero">
+        <p class="eyebrow">Microsoft 365 + Azure lab security</p>
+        <h1>After Party</h1>
+        <p class="lede">Connect an isolated tenant and turn it into a cybersecurity lab.</p>
+      </header>
+
+      <section class="connect-card" aria-labelledby="connect-heading">
+        <div>
+          <p class="step">First, choose the tenant you want to use</p>
+          <h2 id="connect-heading">Connect your tenant</h2>
+          <p class="explanation">
+            Sign in with a Microsoft organizational account. You will see the selected account and
+            tenant before After Party asks to install anything.
+          </p>
+        </div>
+
+        <div id="auth-status" class="notice" role="status" aria-live="polite">
+          Preparing Microsoft sign-in…
+        </div>
+
+        <div id="account-picker" class="account-picker" hidden>
+          <label for="account-select">Choose a signed-in account</label>
+          <select id="account-select"></select>
+          <button id="use-account" class="button secondary" type="button">Use this account</button>
+        </div>
+
+        <dl id="account-details" class="account-details" hidden>
+          <div>
+            <dt>Account</dt>
+            <dd id="account-name"></dd>
+            <dd id="account-username" class="muted"></dd>
+          </div>
+          <div>
+            <dt>Tenant ID</dt>
+            <dd><code id="tenant-id"></code></dd>
+          </div>
+        </dl>
+
+        <div class="actions">
+          <button id="connect-tenant" class="button primary" type="button" disabled>
+            Connect your tenant
+          </button>
+          <button id="sign-out" class="button secondary" type="button" hidden>Sign out</button>
+        </div>
+
+        <p class="safety-note">
+          Sign-in alone does not install After Party or change your tenant.
+        </p>
+      </section>
+
+      <footer>
+        <span>Under active development</span>
+        <span aria-hidden="true">·</span>
+        <span>Commit <code>__AFTER_PARTY_COMMIT__</code></span>
+      </footer>
     </main>
   </body>
 </html>

@@ -1,8 +1,13 @@
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const TEXT_EXTENSIONS = new Set(['.css', '.html', '.js', '.json', '.svg', '.txt', '.xml']);
+const require = createRequire(import.meta.url);
+const MSAL_BROWSER_DIRECTORY = path.dirname(
+  require.resolve('@azure/msal-browser/package.json'),
+);
 
 function parseArguments(arguments_) {
   const options = {};
@@ -60,6 +65,15 @@ export async function buildPages({ source, output, commit, basePath }) {
   await rm(output, { recursive: true, force: true });
   await mkdir(output, { recursive: true });
   await cp(source, output, { recursive: true });
+  await mkdir(path.join(output, 'vendor'), { recursive: true });
+  await cp(
+    path.join(MSAL_BROWSER_DIRECTORY, 'lib', 'msal-browser.min.js'),
+    path.join(output, 'vendor', 'msal-browser.min.js'),
+  );
+  await cp(
+    path.join(MSAL_BROWSER_DIRECTORY, 'LICENSE'),
+    path.join(output, 'vendor', 'msal-browser.LICENSE.txt'),
+  );
   await replaceTokens(output, {
     __AFTER_PARTY_BASE_PATH__: basePath,
     __AFTER_PARTY_COMMIT__: commit,

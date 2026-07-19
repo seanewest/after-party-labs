@@ -4,15 +4,19 @@ Pull requests are tested locally. Only `main` is deployed to the public GitHub P
 
 ## Run the site
 
-Install Node.js, then run this command from the repository root:
+Install Node.js, then run these commands from the repository root:
 
 ```bash
+npm ci
 npm run dev
 ```
 
-Open <http://127.0.0.1:4173/> in a browser. Stop the server with `Ctrl+C`.
+Open <http://127.0.0.1:4173/> in a browser. Using that exact loopback address matters because it
+matches the registered local Microsoft sign-in redirect. Stop the server with `Ctrl+C`.
 
-The command builds `site/` into `dist/` with the current Git commit and a local `/` base path, then serves the generated files using Node's built-in HTTP server. It requires no package installation or external development server.
+The command builds `site/` into `dist/` with the current Git commit and a local `/` base path, copies
+the pinned MSAL Browser dependency, then serves the generated files using Node's built-in HTTP
+server. It requires no external development server.
 
 When the worktree contains modified or untracked files, the generated version identity is `<commit>-dirty`. This intentionally cannot match the full commit SHA of a deployed API. Commit or stash local changes and rebuild before attempting a live-capable test that requires exact version alignment.
 
@@ -36,4 +40,5 @@ PORT=8080 npm run dev
 npm test
 ```
 
-The tests run offline and cover the Pages build metadata and local static server.
+The tests run offline and cover Microsoft sign-in state, cancellation and account selection, Pages
+build metadata, and the local static server.

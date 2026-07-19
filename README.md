@@ -8,9 +8,10 @@ The project is under active development. [Visit the current website.](https://se
 
 ## Run it locally
 
-With Node.js installed, there are no packages to install. From the repository root, run:
+With Node.js installed, run these commands from the repository root:
 
 ```bash
+npm ci
 npm run dev
 ```
 

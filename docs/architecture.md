@@ -105,7 +105,11 @@ The SPA is a public client. It must never contain:
 - private certificates;
 - app-only access tokens;
 - simulated-user tokens;
-- refresh tokens.
+- refresh tokens handled directly by application code.
+
+The SPA uses the pinned MSAL Browser library for organizational-account sign-in with authorization
+code and PKCE. MSAL owns its browser session cache and redirect protocol; After Party application
+code reads account metadata but does not inspect, copy, or persist refresh tokens.
 
 ### Runtime managed identity
 
@@ -197,6 +201,8 @@ Expected state includes:
 Secrets and token material must remain encrypted and accessible only to trusted tenant-side runtime identities.
 
 Token cache entries must be separated by tenant, application, and simulated user so that one identity cannot receive another identity's token.
+
+This tenant-side simulated-user cache is separate from the operator's MSAL-managed browser session.
 
 ## Desired-state ownership
 

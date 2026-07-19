@@ -6,13 +6,15 @@
     "node": ">=24.0.0"
   },
   "bin": {
-    "party-dispatcher": "dispatcher/cli.ts"
+    "party-dispatcher": "dispatcher/cli.ts",
+    "party-github-poller": "dispatcher/github-cli.ts"
   },
   "scripts": {
     "build:pages": "node scripts/build-pages.mjs --source site --output dist --commit local --base-path /after-party-labs/",
     "check:types": "tsc --noEmit",
     "dev": "node scripts/serve-pages.mjs",
     "party": "node dispatcher/cli.ts",
+    "poll:github": "node dispatcher/github-cli.ts",
     "test:dispatcher": "node --test test/dispatcher-*.test.ts",
     "test": "node --test"
   },

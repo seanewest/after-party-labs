@@ -25,7 +25,7 @@ test('the public app configuration contains only the reviewed SPA contract', asy
     new URL('../scripts/create-multitenant-app.sh', import.meta.url),
     'utf8',
   );
-  const context = { location: { origin: 'http://127.0.0.1:4173' } };
+  const context = { location: { origin: 'http://127.0.0.1:4173' }, URL };
   vm.runInNewContext(source, context);
   const config = JSON.parse(JSON.stringify(context.afterPartyConfig));
 
@@ -42,11 +42,17 @@ test('the public app configuration contains only the reviewed SPA contract', asy
       local: 'http://127.0.0.1:4173/',
     },
     runtimeApiScope: 'api://9edaa951-658e-4be2-9623-ee906cb604b2/AfterParty.Operate',
+    runtime: {
+      apiImage: '__AFTER_PARTY_RUNTIME_IMAGE__',
+      commit: '__AFTER_PARTY_COMMIT__',
+      templateUrl: 'http://127.0.0.1:4173/runtime-template.json',
+    },
     azureResourceManagerScope: 'https://management.core.windows.net//user_impersonation',
     microsoftGraphDelegatedScopes: [
       'User.Read',
       'Directory.ReadWrite.All',
       'Application.ReadWrite.All',
+      'AppRoleAssignment.ReadWrite.All',
       'Group.ReadWrite.All',
       'User.ReadWrite.All',
       'RoleManagement.ReadWrite.Directory',
@@ -71,6 +77,7 @@ test('the public app configuration contains only the reviewed SPA contract', asy
 
   const productionContext = {
     location: { origin: 'https://seanewest.github.io' },
+    URL,
   };
   vm.runInNewContext(source, productionContext);
   assert.equal(
@@ -85,7 +92,9 @@ test('the public app configuration contains only the reviewed SPA contract', asy
     commit: 'config-test',
     basePath: '/after-party-labs/',
   });
-  assert.equal(await readFile(path.join(output, 'app-config.js'), 'utf8'), source);
+  const builtConfiguration = await readFile(path.join(output, 'app-config.js'), 'utf8');
+  assert.match(builtConfiguration, /commit: 'config-test'/);
+  assert.match(builtConfiguration, /runtime@sha256:0{64}/);
   assert.match(
     await readFile(path.join(output, 'installation.js'), 'utf8'),
     /createTenantInstallation/,
@@ -98,6 +107,13 @@ test('the public app configuration contains only the reviewed SPA contract', asy
     await readFile(path.join(output, 'runtime-api.js'), 'utf8'),
     /createRuntimeApiClient/,
   );
+  assert.match(
+    await readFile(path.join(output, 'runtime/bootstrap.mjs'), 'utf8'),
+    /createRuntimePlan/,
+  );
+  const runtimeTemplate = JSON.parse(await readFile(path.join(output, 'runtime-template.json'), 'utf8'));
+  assert.match(runtimeTemplate.$schema, /subscriptionDeploymentTemplate\.json/);
+  assert.ok(Array.isArray(runtimeTemplate.resources));
 });
 
 test('the static page provides the shared experiment-card presentation', async () => {
@@ -106,6 +122,10 @@ test('the static page provides the shared experiment-card presentation', async (
 
   assert.match(index, /id="experiments-heading"/);
   assert.match(index, /id="experiment-cards"/);
+  assert.match(index, /id="runtime-subscription"/);
+  assert.match(index, /id="runtime-location"/);
+  assert.match(index, /id="confirm-runtime-selection"/);
+  assert.match(index, /Install or repair may create Azure resources/i);
   assert.match(index, /what it can read or change/i);
   assert.match(styles, /\.experiment-card/);
   assert.match(styles, /\.experiment-result/);
@@ -119,7 +139,7 @@ test('the sign-in copy distinguishes identity consent from lab permissions', asy
     new URL('../site/app-config.js', import.meta.url),
     'utf8',
   );
-  const context = { location: { origin: 'https://seanewest.github.io' } };
+  const context = { location: { origin: 'https://seanewest.github.io' }, URL };
   vm.runInNewContext(configurationSource, context);
 
   assert.match(index, /may add an After Party enterprise application/i);
@@ -167,7 +187,11 @@ test('buildPages stamps the exact commit and base path', async (t) => {
   );
   assert.deepEqual(
     JSON.parse(await readFile(path.join(output, 'version.json'), 'utf8')),
-    { commit: 'abc123', basePath: '/after-party-labs/' },
+    {
+      commit: 'abc123',
+      basePath: '/after-party-labs/',
+      runtimeImage: `ghcr.io/seanewest/after-party-labs/runtime@sha256:${'0'.repeat(64)}`,
+    },
   );
   assert.match(
     await readFile(path.join(output, 'vendor', 'msal-browser.min.js'), 'utf8'),

@@ -399,5 +399,17 @@ export function createTenantInstallation({
     throw new InstallationError('graph_unavailable');
   }
 
-  return { begin, consumeCallback, verify };
+  async function verifyCurrent({ account, accessToken }) {
+    const tenantId = requireUuid(account?.tenantId, 'tenant_mismatch');
+    const accountId = String(account?.homeAccountId || '').trim();
+    if (!accountId || !accessToken) {
+      throw new InstallationError('token_unavailable');
+    }
+    return verifyOnce({
+      accessToken,
+      callback: { accountId, tenantId },
+    });
+  }
+
+  return { begin, consumeCallback, verify, verifyCurrent };
 }

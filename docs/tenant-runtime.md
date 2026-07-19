@@ -2,7 +2,7 @@
 
 ## What this gives the student
 
-The future **Install or repair tenant runtime** card creates one small Azure runtime inside the
+The **Install or repair tenant runtime** card creates one small Azure runtime inside the
 student's selected subscription. The card must show the subscription, tenant, region, required
 Azure role, resources, and exact After Party commit before the student confirms any change.
 
@@ -19,20 +19,27 @@ One subscription-scope Bicep deployment owns:
 | Resource group | One clear ownership and teardown boundary for the runtime. |
 | Container Apps environment | Hosts the tenant-side API without a separate cluster. |
 | Container App | Provides the single HTTPS API boundary used by the SPA and live tests. |
-| Container App authentication configuration | Rejects unauthenticated callers and accepts only v2 tokens issued for the verified tenant, After Party API audience, and official SPA client. |
+| Container App authentication configuration | Rejects unauthenticated callers and accepts only v2 tokens issued for the verified tenant and After Party API audience to the official SPA or exact runtime identity. |
 | User-assigned managed identity | Gives the API a passwordless runtime identity. |
+| GitHub environment federated credential | Lets the trusted `development-tenant` environment authenticate as that same student-owned runtime identity without a stored secret. |
 | Storage account and private `state` blob container | Holds operation status and the [tenant operation lock](tenant-lock.md). |
 | `Storage Blob Data Contributor` assignment | Lets only the runtime identity read and change that state container. |
+| Subscription `Owner` assignment | Gives the runtime deliberately broad Azure authority during this exploration pass. |
+| Broad Microsoft Graph application-role assignments | Lets the runtime perform unattended tenant operations supported by the current experiments. |
+| `AfterParty.Operate` application-role assignment | Lets the federated runtime identity enter the tenant-local API used by both SPA and GitHub paths. |
 
 There is no generic job yet because the first operation does not require one. There is also no
-Key Vault, registry, Log Analytics workspace, simulated-user authentication, Microsoft365DSC
+Key Vault, tenant-owned container registry, Log Analytics workspace, simulated-user authentication, Microsoft365DSC
 baseline, or second state system in this slice.
 
-The Container App is an HTTPS shell for the API image pinned in the plan. Its platform
+The Container App runs the API image pinned in the plan. GitHub Pages publishes a public GHCR
+image from the same commit, resolves its immutable digest, and stamps that digest into the static
+site before deployment. The workflow logs out before pulling the resolved image, so Pages will not
+publish an image that the student-owned Container App cannot pull anonymously. Its platform
 authentication validates Microsoft Entra token signatures, issuer, audience, and calling
 application before a request reaches the API. The API then applies the offline-testable contract
-in [`runtime/authorization.mjs`](../runtime/authorization.mjs). A live deployment still requires an
-API image pinned to a digest from the same commit.
+in [`runtime/authorization.mjs`](../runtime/authorization.mjs), atomically claims request IDs in
+Blob Storage, and sends stateful operations through the shared tenant lock.
 
 ## Preflight contract
 
@@ -54,7 +61,7 @@ The planner returns no deployment plan unless all of these are true:
   Storage;
 - the provider metadata confirms support, and the operator can register any required provider that
   is not ready yet; and
-- the operator can create the resources and the container-scoped role assignment.
+- the operator can create the resources, federated credential, and required role assignments.
 
 The accepted plan lists provider registrations before the resource deployment. Registration is an
 Azure change and therefore happens only after the operator confirms the card; repeating it is
@@ -63,7 +70,8 @@ safe, and deployment waits until registration finishes.
 The simplest role choice is **Owner** on the selected subscription. The narrower documented
 combination is **Contributor** plus **Role Based Access Control Administrator**. Custom roles also
 work when their effective permissions contain every action in the contract. Contributor alone is
-not enough because it cannot create the managed identity's Storage role assignment. Azure role
+not enough because it cannot create the managed identity's Storage and subscription Owner role
+assignments. Azure role
 assignment changes can take time to propagate, so a later live operation must report that state
 without treating a partial install as success.
 
@@ -88,10 +96,29 @@ group, API, API authentication configuration, managed identity, state container,
 against the original plan. Missing outputs, partial deployments, and mismatched resources fail
 closed with a repair message.
 
+After deployment, the SPA uses its reviewed `AppRoleAssignment.ReadWrite.All` delegated permission
+to idempotently grant the runtime identity the broad Microsoft Graph application roles and the
+tenant-local `AfterParty.Operate` application role. It then reads the assignments back and reports
+success only when every exact role ID is present. Repair repeats the same deterministic deployment
+and assignment checks safely.
+
+The runtime application roles are intentionally broad in this pass:
+
+- `Application.ReadWrite.All`, `Directory.ReadWrite.All`, `Group.ReadWrite.All`, and
+  `User.ReadWrite.All`;
+- `RoleManagement.ReadWrite.Directory` and `Policy.ReadWrite.ConditionalAccess`;
+- `AuditLog.Read.All`, `Reports.Read.All`, and `SecurityEvents.ReadWrite.All`; and
+- `Mail.ReadWrite`, `Mail.Send`, `Files.ReadWrite.All`, and `Sites.ReadWrite.All`.
+
+Together with subscription Owner, these permissions are appropriate only for the isolated lab
+tenant. Later hardening must replace them with the minimum permissions proven necessary by the
+experiments.
+
 ## Calling the runtime as the signed-in operator
 
-The project-owned home application exposes the admin-consent-only delegated scope
-`api://<application-client-id>/AfterParty.Operate` and preauthorizes only its own public SPA client.
+The project-owned home application exposes `AfterParty.Operate` as both an admin-consent-only
+delegated scope and an application role for
+`api://<application-client-id>/AfterParty.Operate`. It preauthorizes only its own public SPA client.
 In a student tenant, the local enterprise application represents that API. Tokens are issued by the
 student tenant, and the runtime has no operational dependency on the application home tenant.
 The SPA asks MSAL for that single runtime token immediately before a call, treats it as opaque, and
@@ -106,8 +133,8 @@ resource ID, and full commit the SPA believes it is calling. Platform authentica
 missing or invalid bearer token. The API independently requires:
 
 - a v2 access token for the runtime's exact tenant and application audience;
-- the official After Party client as the authorized party and the `AfterParty.Operate` delegated
-  scope;
+- either the official After Party SPA with the delegated `AfterParty.Operate` scope, or the exact
+  runtime managed identity with the `AfterParty.Operate` application role;
 - a non-expired signed-in operator object ID;
 - a verified installation with the same tenant, application, runtime resource, and commit;
 - an allowlisted operation and an exact request match; and
@@ -119,8 +146,15 @@ also verifies successful response identity before showing success. Task #24 supp
 state implementation used for request claims and the tenant-wide operation lock; Task #25 mounts
 this client contract into the experiment cards.
 
-The Bicep template is compiled in CI. Its code path is intentionally the same one later used by the
-SPA operation and the authorized live test.
+The deployed API joins these contracts in [`runtime/server.mjs`](../runtime/server.mjs). The lock
+card starts one diagnostic owner, proves that a competitor receives the shared `lock_busy`
+contention result, waits for release, and proves that a new diagnostic can acquire and release the
+same path. The SPA accepts success only when the API returns all four fixed states: contention
+confirmed, owner exclusive, competitor blocked, and recovery released.
+
+The Bicep template is compiled in CI and compared byte-for-byte with the published
+[`site/runtime-template.json`](../site/runtime-template.json). Its code path is intentionally the
+same one used by the SPA operation and the authorized live test.
 
 Deployment verification also requires the exact tenant lock blob path,
 `locks/tenant-operation.json`. The Container App receives that path as

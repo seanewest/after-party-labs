@@ -64,6 +64,7 @@
               <li><code>User.Read</code></li>
               <li><code>Directory.ReadWrite.All</code></li>
               <li><code>Application.ReadWrite.All</code></li>
+              <li><code>AppRoleAssignment.ReadWrite.All</code></li>
               <li><code>Group.ReadWrite.All</code></li>
               <li><code>User.ReadWrite.All</code></li>
               <li><code>RoleManagement.ReadWrite.Directory</code></li>
@@ -112,6 +113,40 @@
             result in this tenant. Experiment cards appear here when their operations are available.
           </p>
         </div>
+
+        <div id="runtime-selection" class="runtime-selection" hidden>
+          <div>
+            <p class="step">Runtime target</p>
+            <h3>Choose the Azure subscription and region</h3>
+            <p class="explanation">
+              Verification reads Azure metadata and your effective role without changing the
+              subscription. Installation remains disabled until you confirm the exact verified
+              target below.
+            </p>
+          </div>
+
+          <div class="runtime-fields">
+            <label for="runtime-subscription">Azure subscription</label>
+            <select id="runtime-subscription" disabled></select>
+            <label for="runtime-location">Azure region</label>
+            <select id="runtime-location" disabled></select>
+          </div>
+
+          <button id="verify-runtime-selection" class="button secondary" type="button" disabled>
+            Verify this target
+          </button>
+          <div id="runtime-selection-status" class="notice" role="status" aria-live="polite" hidden></div>
+          <dl id="runtime-selection-summary" class="runtime-selection-summary" hidden></dl>
+          <label id="runtime-confirmation-row" class="runtime-confirmation" hidden>
+            <input id="confirm-runtime-selection" type="checkbox">
+            <span>
+              I confirm this tenant, subscription, region, role result, resource list, and commit.
+              Install or repair may create Azure resources and grant the runtime identity broad
+              Azure and Microsoft Graph permissions in this isolated lab tenant.
+            </span>
+          </label>
+        </div>
+
         <div id="experiment-cards" class="experiment-grid" aria-live="polite"></div>
       </section>
 

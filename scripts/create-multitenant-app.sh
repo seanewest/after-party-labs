@@ -21,11 +21,13 @@
   azure_service_management_app_id='797f4846-ba00-4fd7-ba43-dac1f8f63013'
   azure_service_management_permission_id='41094075-9dad-400e-a0bd-54e686782033'
   runtime_api_scope_id='5c9bfc9c-4f2e-477d-a572-3d7fabe8542d'
+  runtime_api_role_id='f2b4a169-9f29-48c3-b0db-8c5efc1b895b'
   runtime_api_scope_name='AfterParty.Operate'
   microsoft_graph_permission_names=(
     'User.Read'
     'Directory.ReadWrite.All'
     'Application.ReadWrite.All'
+    'AppRoleAssignment.ReadWrite.All'
     'Group.ReadWrite.All'
     'User.ReadWrite.All'
     'RoleManagement.ReadWrite.Directory'
@@ -42,6 +44,7 @@
     'e1fe6dd8-ba31-4d61-89e7-88639da4683d'
     'c5366453-9fb0-48a5-a156-24f0c49a4b84'
     'bdfbf15f-ee85-4955-8675-146e8e5296b5'
+    '84bccea3-f856-4a8a-967b-dbe0a3d53a64'
     '4e46008b-f24c-477d-8fff-7bb4ec7aafe0'
     '204e0828-b5ca-4ad8-b9f3-f32a958e7cc4'
     'd01b97e9-cbc0-49fe-810a-750afd5527a3'
@@ -307,12 +310,14 @@
   fi
 
   runtime_api_request_body="$(printf \
-    '{"identifierUris":["api://%s"],"api":{"requestedAccessTokenVersion":2,"oauth2PermissionScopes":[{"adminConsentDescription":"Allow the After Party SPA to call the matching tenant runtime as the signed-in operator.","adminConsentDisplayName":"Operate the After Party tenant runtime","id":"%s","isEnabled":true,"type":"Admin","userConsentDescription":null,"userConsentDisplayName":null,"value":"%s"}],"preAuthorizedApplications":[{"appId":"%s","delegatedPermissionIds":["%s"]}]}}' \
+    '{"identifierUris":["api://%s"],"api":{"requestedAccessTokenVersion":2,"oauth2PermissionScopes":[{"adminConsentDescription":"Allow the After Party SPA to call the matching tenant runtime as the signed-in operator.","adminConsentDisplayName":"Operate the After Party tenant runtime","id":"%s","isEnabled":true,"type":"Admin","userConsentDescription":null,"userConsentDisplayName":null,"value":"%s"}],"preAuthorizedApplications":[{"appId":"%s","delegatedPermissionIds":["%s"]}]},"appRoles":[{"allowedMemberTypes":["Application"],"description":"Allow the tenant runtime identity and its federated GitHub workflow to call the matching After Party API.","displayName":"Operate the After Party tenant runtime","id":"%s","isEnabled":true,"origin":"Application","value":"%s"}]}' \
     "$target_app_id" \
     "$runtime_api_scope_id" \
     "$runtime_api_scope_name" \
     "$target_app_id" \
-    "$runtime_api_scope_id")"
+    "$runtime_api_scope_id" \
+    "$runtime_api_role_id" \
+    "$runtime_api_scope_name")"
   az rest \
     --method PATCH \
     --url "$graph_applications_url/$target_object_id" \
@@ -378,6 +383,13 @@
         --output tsv \
         --only-show-errors 2>/dev/null || true
     )"
+    actual_runtime_role_id="$(
+      az ad app show \
+        --id "$target_app_id" \
+        --query "appRoles[?value == '$runtime_api_scope_name' && isEnabled && contains(allowedMemberTypes, 'Application')].id | [0]" \
+        --output tsv \
+        --only-show-errors 2>/dev/null || true
+    )"
     if [[ "$actual_audience" == 'AzureADMultipleOrgs' &&
           "$actual_redirect_uris" == "$expected_redirect_uris" &&
           "$actual_permission_ids" == "$expected_permission_ids" &&
@@ -385,7 +397,8 @@
           "$actual_identifier_uri" == "api://$target_app_id" &&
           "$actual_token_version" == '2' &&
           "$actual_runtime_scope_id" == "$runtime_api_scope_id" &&
-          "$actual_preauthorized_scope_id" == "$runtime_api_scope_id" ]]; then
+          "$actual_preauthorized_scope_id" == "$runtime_api_scope_id" &&
+          "$actual_runtime_role_id" == "$runtime_api_role_id" ]]; then
       verified='true'
       break
     fi

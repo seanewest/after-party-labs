@@ -58,6 +58,24 @@ function validateResult(result, expected, requestId, operation) {
   ) {
     fail('runtime_response_invalid');
   }
+  let diagnostic;
+  if (operation === 'lock.test') {
+    if (
+      !result.diagnostic ||
+      result.diagnostic.state !== 'contention-confirmed' ||
+      result.diagnostic.owner !== 'exclusive' ||
+      result.diagnostic.competitor !== 'blocked' ||
+      result.diagnostic.recovery !== 'released'
+    ) {
+      fail('runtime_response_invalid');
+    }
+    diagnostic = Object.freeze({
+      state: 'contention-confirmed',
+      owner: 'exclusive',
+      competitor: 'blocked',
+      recovery: 'released',
+    });
+  }
   return Object.freeze({
     status: result.status,
     operation: result.operation,
@@ -65,6 +83,7 @@ function validateResult(result, expected, requestId, operation) {
     tenantId: expected.tenantId,
     runtimeId: expected.runtimeId,
     commit: expected.commit,
+    ...(diagnostic ? { diagnostic } : {}),
   });
 }
 

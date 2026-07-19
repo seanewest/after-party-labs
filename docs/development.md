@@ -95,6 +95,16 @@ branch, rather than relying on an outdated branch state.
 GitHub Actions should handle builds, deployments, and live tests, using federated
 authentication rather than long-lived local credentials.
 
+The repository is public for reading, but workflows with access to the `development-tenant`
+environment are collaborator-only privileged code. That environment can federate as the broadly
+authorized student runtime identity and may therefore control the development Azure and Microsoft
+365 tenant. Never approve a privileged workflow run from an untrusted pull request. Keep environment
+approvals and branch protection enabled so arbitrary fork code cannot reach tenant federation.
+
+The Pages workflow builds the runtime container from the exact main commit, publishes it to GHCR,
+resolves the immutable digest, and stamps that digest and commit into the site. Pull-request CI
+builds the same Dockerfile without publishing or contacting a live tenant.
+
 Live testing is appropriate when a change needs proof against Microsoft services or affects
 the real tenant path. Changes that do not depend on the live environment should not require
 it.

@@ -33,6 +33,8 @@ export const REQUIRED_CONTROL_PLANE_ACTIONS = Object.freeze([
   'Microsoft.ManagedIdentity/userAssignedIdentities/read',
   'Microsoft.ManagedIdentity/userAssignedIdentities/write',
   'Microsoft.ManagedIdentity/userAssignedIdentities/assign/action',
+  'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/read',
+  'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write',
   'Microsoft.ManagedIdentity/register/action',
   'Microsoft.Storage/storageAccounts/read',
   'Microsoft.Storage/storageAccounts/write',
@@ -279,8 +281,12 @@ export function createRuntimePlan({ request, evidence }) {
       'Container App API',
       'Container App Microsoft Entra authentication',
       'user-assigned managed identity',
+      'GitHub environment federation on the runtime identity',
       'StorageV2 account and private state container',
       'container-scoped Storage Blob Data Contributor assignment',
+      'subscription-scoped Owner assignment for the runtime identity',
+      'broad Microsoft Graph application roles for the runtime identity',
+      'AfterParty.Operate application role for GitHub-to-API calls',
     ]),
   });
 }
@@ -323,6 +329,16 @@ export function verifyRuntimeDeployment({ plan, deployment }) {
   const apiUrl = outputValue(outputs, 'apiUrl');
   const authConfigId = outputValue(outputs, 'authConfigId');
   const identityId = outputValue(outputs, 'identityId');
+  const identityClientId = requireUuid(
+    outputValue(outputs, 'identityClientId'),
+    'deployment_mismatch',
+  );
+  const identityPrincipalId = requireUuid(
+    outputValue(outputs, 'identityPrincipalId'),
+    'deployment_mismatch',
+  );
+  const githubFederationId = outputValue(outputs, 'githubFederationId');
+  const ownerRoleAssignmentId = outputValue(outputs, 'ownerRoleAssignmentId');
   const stateContainerId = outputValue(outputs, 'stateContainerId');
   const tenantLockBlobPath = outputValue(outputs, 'tenantLockBlobPath');
   const expectedResourceGroupId =
@@ -332,6 +348,9 @@ export function verifyRuntimeDeployment({ plan, deployment }) {
   const expectedIdentityId =
     `${expectedResourceGroupId}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/${plan.deployment.parameters.runtimeName}-identity`;
   const expectedAuthConfigId = `${expectedApiId}/authConfigs/current`;
+  const expectedGithubFederationId = `${expectedIdentityId}/federatedIdentityCredentials/github-development-tenant`;
+  const roleAssignmentPrefix =
+    `/subscriptions/${subscriptionId}/providers/Microsoft.Authorization/roleAssignments/`.toLowerCase();
   const stateContainerPrefix =
     `${expectedResourceGroupId}/providers/Microsoft.Storage/storageAccounts/`.toLowerCase();
   const normalizedStateContainerId = stateContainerId.toLowerCase();
@@ -343,6 +362,9 @@ export function verifyRuntimeDeployment({ plan, deployment }) {
     apiId.toLowerCase() !== expectedApiId.toLowerCase() ||
     authConfigId.toLowerCase() !== expectedAuthConfigId.toLowerCase() ||
     identityId.toLowerCase() !== expectedIdentityId.toLowerCase() ||
+    githubFederationId.toLowerCase() !== expectedGithubFederationId.toLowerCase() ||
+    !ownerRoleAssignmentId.toLowerCase().startsWith(roleAssignmentPrefix) ||
+    !UUID_PATTERN.test(ownerRoleAssignmentId.slice(roleAssignmentPrefix.length)) ||
     tenantLockBlobPath !== TENANT_LOCK_BLOB_PATH ||
     stateContainerPath.length !== 5 ||
     !/^[a-z0-9]{3,24}$/.test(stateContainerPath[0]) ||
@@ -365,6 +387,10 @@ export function verifyRuntimeDeployment({ plan, deployment }) {
     apiUrl,
     authConfigId,
     identityId,
+    identityClientId,
+    identityPrincipalId,
+    githubFederationId,
+    ownerRoleAssignmentId,
     stateContainerId,
     tenantLockBlobPath,
   });

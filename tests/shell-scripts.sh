@@ -139,6 +139,9 @@ case "${1:-}:${2:-}:${3:-}" in
       *preAuthorizedApplications*)
         printf '5c9bfc9c-4f2e-477d-a572-3d7fabe8542d\n'
         ;;
+      *appRoles*)
+        printf 'f2b4a169-9f29-48c3-b0db-8c5efc1b895b\n'
+        ;;
       *requiredResourceAccess*)
         if [[ "$query" == *'797f4846-ba00-4fd7-ba43-dac1f8f63013'* ]]; then
           printf '%s\n' "${AZ_MOCK_AZURE_PERMISSION_IDS:-41094075-9dad-400e-a0bd-54e686782033}"
@@ -242,6 +245,7 @@ permission_ids=(
   'e1fe6dd8-ba31-4d61-89e7-88639da4683d'
   'c5366453-9fb0-48a5-a156-24f0c49a4b84'
   'bdfbf15f-ee85-4955-8675-146e8e5296b5'
+  '84bccea3-f856-4a8a-967b-dbe0a3d53a64'
   '4e46008b-f24c-477d-8fff-7bb4ec7aafe0'
   '204e0828-b5ca-4ad8-b9f3-f32a958e7cc4'
   'd01b97e9-cbc0-49fe-810a-750afd5527a3'
@@ -269,13 +273,14 @@ create_output="$(
 )"
 assert_contains "$create_output" 'Created and verified the multitenant app registration.'
 assert_contains "$create_output" "Application (client) ID: $app_id"
-assert_contains "$create_output" 'Configured 14 delegated Microsoft Graph permissions:'
+assert_contains "$create_output" 'Configured 15 delegated Microsoft Graph permissions:'
 assert_contains "$create_output" 'Azure Service Management / user_impersonation'
 assert_contains "$create_output" "Runtime API scope: api://$app_id/AfterParty.Operate"
 assert_contains "$create_output" 'No client secret, certificate, or service principal was created.'
 assert_log_contains 'rest --method POST'
 assert_log_contains 'AfterParty.Operate'
 assert_log_contains 'requestedAccessTokenVersion'
+assert_log_contains 'f2b4a169-9f29-48c3-b0db-8c5efc1b895b'
 assert_log_contains '797f4846-ba00-4fd7-ba43-dac1f8f63013'
 assert_log_contains '41094075-9dad-400e-a0bd-54e686782033'
 assert_log_contains 'http://127.0.0.1:4173/'

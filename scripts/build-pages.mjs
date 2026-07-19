@@ -1,13 +1,15 @@
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const TEXT_EXTENSIONS = new Set(['.css', '.html', '.js', '.json', '.svg', '.txt', '.xml']);
 const require = createRequire(import.meta.url);
 const MSAL_BROWSER_DIRECTORY = path.dirname(
   require.resolve('@azure/msal-browser/package.json'),
 );
+const SHARED_RUNTIME_DIRECTORY = fileURLToPath(new URL('../runtime', import.meta.url));
+const OFFLINE_RUNTIME_IMAGE = `ghcr.io/seanewest/after-party-labs/runtime@sha256:${'0'.repeat(64)}`;
 
 function parseArguments(arguments_) {
   const options = {};
@@ -50,7 +52,7 @@ async function replaceTokens(directory, replacements) {
   }
 }
 
-export async function buildPages({ source, output, commit, basePath }) {
+export async function buildPages({ source, output, commit, basePath, runtimeImage = OFFLINE_RUNTIME_IMAGE }) {
   if (!source || !output || !commit || !basePath) {
     throw new Error('source, output, commit, and basePath are required');
   }
@@ -65,6 +67,10 @@ export async function buildPages({ source, output, commit, basePath }) {
   await rm(output, { recursive: true, force: true });
   await mkdir(output, { recursive: true });
   await cp(source, output, { recursive: true });
+  await mkdir(path.join(output, 'runtime'), { recursive: true });
+  for (const file of ['bootstrap.mjs', 'tenant-lock.mjs']) {
+    await cp(path.join(SHARED_RUNTIME_DIRECTORY, file), path.join(output, 'runtime', file));
+  }
   await mkdir(path.join(output, 'vendor'), { recursive: true });
   await cp(
     path.join(MSAL_BROWSER_DIRECTORY, 'lib', 'msal-browser.min.js'),
@@ -77,10 +83,11 @@ export async function buildPages({ source, output, commit, basePath }) {
   await replaceTokens(output, {
     __AFTER_PARTY_BASE_PATH__: basePath,
     __AFTER_PARTY_COMMIT__: commit,
+    __AFTER_PARTY_RUNTIME_IMAGE__: runtimeImage,
   });
   await writeFile(
     path.join(output, 'version.json'),
-    `${JSON.stringify({ commit, basePath }, null, 2)}\n`,
+    `${JSON.stringify({ commit, basePath, runtimeImage }, null, 2)}\n`,
   );
 }
 
@@ -92,5 +99,6 @@ if (import.meta.url === invokedPath) {
     output: options.output,
     commit: options.commit,
     basePath: options['base-path'],
+    runtimeImage: options['runtime-image'],
   });
 }

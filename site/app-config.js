@@ -18,11 +18,17 @@
       local: localRedirectUri,
     }),
     runtimeApiScope: 'api://9edaa951-658e-4be2-9623-ee906cb604b2/AfterParty.Operate',
+    runtime: Object.freeze({
+      apiImage: '__AFTER_PARTY_RUNTIME_IMAGE__',
+      commit: '__AFTER_PARTY_COMMIT__',
+      templateUrl: new URL('runtime-template.json', redirectUri).href,
+    }),
     azureResourceManagerScope: 'https://management.core.windows.net//user_impersonation',
     microsoftGraphDelegatedScopes: Object.freeze([
       'User.Read',
       'Directory.ReadWrite.All',
       'Application.ReadWrite.All',
+      'AppRoleAssignment.ReadWrite.All',
       'Group.ReadWrite.All',
       'User.ReadWrite.All',
       'RoleManagement.ReadWrite.Directory',

@@ -156,7 +156,11 @@ IDs through the tenant state plane before an operation can start.
 
 ### Runtime managed identity
 
-The tenant-side API and jobs use an Azure managed identity for unattended work.
+The tenant-side API and jobs use an Azure managed identity for unattended work. For this
+deliberately broad exploration pass, installation assigns it Owner on the selected Azure
+subscription plus the reviewed broad Microsoft Graph application roles. Those permissions must be
+narrowed in a later hardening pass; the current goal is to avoid repeated operator intervention
+while capabilities are being discovered.
 
 This identity may be used for:
 
@@ -166,7 +170,12 @@ This identity may be used for:
 - supported app-only Microsoft Graph operations;
 - starting or coordinating tenant-side work.
 
-The managed identity is created as part of the student-owned Azure infrastructure. It does not require another manually maintained app registration.
+The managed identity is created as part of the student-owned Azure infrastructure. It does not
+require another manually maintained app registration. A federated credential scoped to the
+repository's `development-tenant` GitHub environment lets trusted Actions authenticate as this same
+identity. The student tenant then issues an app-only token for its local After Party enterprise
+application, and GitHub enters the same API and lock path as the SPA; neither the API nor Actions
+needs the home-tenant application object at runtime.
 
 ### Simulated users
 

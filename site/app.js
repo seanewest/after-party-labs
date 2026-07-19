@@ -7,6 +7,11 @@ import {
   createTenantInstallation,
   formatInstallationError,
 } from './installation.js';
+import {
+  createAzureRuntimeInstaller,
+  RUNTIME_API_ROLE_ID,
+} from './azure-runtime.js';
+import { mountRuntimeCards } from './runtime-cards.js';
 
 export function createSignInController({ authentication, view }) {
   async function run(action) {
@@ -16,8 +21,10 @@ export function createSignInController({ authentication, view }) {
       if (state) {
         view.render(state);
       }
+      return state;
     } catch (error) {
       view.renderError(formatAuthenticationError(error));
+      return null;
     } finally {
       view.setBusy(false);
     }
@@ -45,8 +52,10 @@ export function createInstallationController({
       if (state) {
         view.renderInstallation(state);
       }
+      return state;
     } catch (error) {
       view.renderInstallationError(formatInstallationError(error));
+      return null;
     } finally {
       view.setInstallationBusy(false);
     }
@@ -56,14 +65,18 @@ export function createInstallationController({
     initialize: () =>
       run(async () => {
         const callback = installation.consumeCallback(currentUrl());
-        if (!callback) {
-          return null;
-        }
         const authenticationState = authentication.getState();
         if (authenticationState.status !== 'signed-in') {
+          if (!callback) return null;
           throw { code: 'account_mismatch' };
         }
         const accessToken = await authentication.acquireGraphToken(scopes);
+        if (!callback) {
+          return installation.verifyCurrent({
+            account: authenticationState.account,
+            accessToken,
+          });
+        }
         return installation.verify({
           account: authenticationState.account,
           accessToken,
@@ -80,6 +93,40 @@ export function createInstallationController({
         installation.begin(authenticationState.account);
       }),
   };
+}
+
+export function createLazyRuntimeInstaller({ authentication, configuration, fetch }) {
+  let installer;
+
+  async function getInstaller() {
+    if (!installer) {
+      const { createRuntimePlan, verifyRuntimeDeployment } = await import('./runtime/bootstrap.mjs');
+      installer = createAzureRuntimeInstaller({
+        configuration: {
+          applicationClientId: configuration.authentication.clientId,
+          apiImage: configuration.runtime.apiImage,
+          azureScope: configuration.azureResourceManagerScope,
+          commit: configuration.runtime.commit,
+          graphScopes: configuration.microsoftGraphDelegatedScopes,
+          runtimeApiRoleId: RUNTIME_API_ROLE_ID,
+          templateUrl: configuration.runtime.templateUrl,
+        },
+        acquireAzureToken: (scope) => authentication.acquireAzureManagementToken(scope),
+        acquireGraphToken: (scopes) => authentication.acquireGraphToken(scopes),
+        fetchArm: fetch,
+        fetchGraph: fetch,
+        fetchTemplate: fetch,
+        createRuntimePlan,
+        verifyRuntimeDeployment,
+      });
+    }
+    return installer;
+  }
+
+  return Object.freeze(Object.fromEntries(
+    ['deploy', 'grantRuntimePermissions', 'listLocations', 'listSubscriptions', 'preflight']
+      .map((method) => [method, async (...arguments_) => (await getInstaller())[method](...arguments_)]),
+  ));
 }
 
 function requiredElement(id) {
@@ -211,6 +258,7 @@ export async function startSignInPage() {
   const PublicClientApplication = globalThis.msal?.PublicClientApplication;
   let authentication;
   let installation;
+  let runtimeCards;
 
   try {
     authentication = createAuthentication({
@@ -234,6 +282,17 @@ export async function startSignInPage() {
       fetchGraph: globalThis.fetch.bind(globalThis),
       randomUUID: () => globalThis.crypto.randomUUID(),
     });
+    runtimeCards = mountRuntimeCards({
+      document,
+      authentication,
+      configuration: appConfiguration,
+      container: requiredElement('experiment-cards'),
+      installer: createLazyRuntimeInstaller({
+        authentication,
+        configuration: appConfiguration,
+        fetch: globalThis.fetch.bind(globalThis),
+      }),
+    });
   } catch (error) {
     view.renderError(formatAuthenticationError(error));
     view.setBusy(false);
@@ -249,15 +308,31 @@ export async function startSignInPage() {
     currentUrl: () => globalThis.location.href,
   });
   view.elements.connect.addEventListener('click', () => controller.signIn());
-  view.elements.signOut.addEventListener('click', () => controller.signOut());
-  view.elements.useAccount.addEventListener('click', () =>
-    controller.selectAccount(view.elements.select.value),
-  );
+  view.elements.signOut.addEventListener('click', () => {
+    runtimeCards.reset();
+    return controller.signOut();
+  });
+  view.elements.useAccount.addEventListener('click', async () => {
+    const state = await controller.selectAccount(view.elements.select.value);
+    if (state?.status === 'signed-in') {
+      const installed = await installationController.initialize();
+      if (installed?.status === 'installed') await runtimeCards.connect(installed);
+    }
+  });
   view.elements.approvePermissions.addEventListener('click', () =>
     installationController.approve(),
   );
-  await controller.initialize();
-  await installationController.initialize();
+  const authenticationState = await controller.initialize();
+  if (authenticationState?.status !== 'signed-in') {
+    runtimeCards.reset();
+    return;
+  }
+  const installed = await installationController.initialize();
+  if (installed?.status === 'installed') {
+    await runtimeCards.connect(installed);
+  } else {
+    runtimeCards.reset();
+  }
 }
 
 if (typeof document !== 'undefined') {

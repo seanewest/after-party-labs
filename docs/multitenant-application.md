@@ -62,10 +62,12 @@ identity consent during sign-in may create the tenant's enterprise application, 
 grant the broad permissions below. The student installation flow must show that requested access,
 obtain the appropriate consent, and verify the resulting grants.
 
-The registration also exposes `AfterParty.Operate`, an admin-consent-only delegated scope for the
-tenant-owned After Party API. It is preauthorized only for the same official SPA application. This
-scope produces a token whose audience is After Party—not Microsoft Graph—and the SPA sends that
-opaque token only to the verified tenant runtime. It is not an app-only permission or credential.
+The registration also exposes `AfterParty.Operate` as both an admin-consent-only delegated scope
+and an application role for the tenant-owned After Party API. The delegated scope is preauthorized
+only for the same official SPA application. The application role is assigned only to the
+student-owned runtime managed identity, including when GitHub Actions federates as that identity.
+Both paths receive a token from the student tenant for its local enterprise application and enter
+the same tenant API; the API does not contact the application object's home tenant.
 
 The same one-time administrator consent also includes Azure Service Management delegated
 `user_impersonation`. The SPA can therefore request an Azure Resource Manager token silently after
@@ -78,6 +80,7 @@ hardening will replace it with a narrower permission model.
 | `User.Read` | Identify the signed-in account. |
 | `Directory.ReadWrite.All` | Read and change general directory objects. |
 | `Application.ReadWrite.All` | Create and manage lab app registrations and enterprise applications. |
+| `AppRoleAssignment.ReadWrite.All` | Grant the tenant runtime identity its reviewed broad application roles. |
 | `Group.ReadWrite.All` | Create and manage lab groups and memberships. |
 | `User.ReadWrite.All` | Create and manage simulated lab users. |
 | `RoleManagement.ReadWrite.Directory` | Create and remove deliberate directory-role assignments. |

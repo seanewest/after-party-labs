@@ -372,3 +372,36 @@ test('the installation controller resumes consent for the same account and rende
     ['busy', false],
   ]);
 });
+
+test('the installation controller verifies an already connected tenant without a consent callback', async () => {
+  const selected = account({ tenantId: '33333333-3333-3333-3333-333333333333' });
+  let verified;
+  const controller = createInstallationController({
+    authentication: {
+      getState: () => ({ status: 'signed-in', account: selected }),
+      acquireGraphToken: async () => 'access-token',
+    },
+    installation: {
+      consumeCallback: () => null,
+      async verifyCurrent(input) {
+        verified = input;
+        return {
+          status: 'installed',
+          tenantId: selected.tenantId,
+          servicePrincipalId: '44444444-4444-4444-8444-444444444444',
+        };
+      },
+    },
+    scopes: ['User.Read'],
+    view: {
+      setInstallationBusy() {},
+      renderInstallation() {},
+      renderInstallationError() {},
+    },
+    currentUrl: () => 'https://example.test/',
+  });
+
+  const state = await controller.initialize();
+  assert.equal(state.status, 'installed');
+  assert.deepEqual(verified, { account: selected, accessToken: 'access-token' });
+});

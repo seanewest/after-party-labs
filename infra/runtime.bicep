@@ -17,6 +17,7 @@ var tags = {
 var identityName = '${runtimeName}-identity'
 var environmentName = '${runtimeName}-environment'
 var apiName = '${runtimeName}-api'
+var apiResourceId = '${resourceGroup().id}/providers/Microsoft.App/containerApps/${apiName}'
 var publishedSpaOrigin = 'https://seanewest.github.io'
 var storageName = take('ap${uniqueString(subscription().id, toLower(resourceGroup().id), runtimeName)}', 24)
 var storageBlobDataContributorRoleId = subscriptionResourceId(
@@ -28,6 +29,18 @@ resource runtimeIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-
   name: identityName
   location: location
   tags: union(tags, { 'after-party-component': 'runtime-identity' })
+}
+
+resource githubFederation 'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials@2023-01-31' = {
+  parent: runtimeIdentity
+  name: 'github-development-tenant'
+  properties: {
+    issuer: 'https://token.actions.githubusercontent.com'
+    subject: 'repo:seanewest/after-party-labs:environment:development-tenant'
+    audiences: [
+      'api://AzureADTokenExchange'
+    ]
+  }
 }
 
 resource stateStorage 'Microsoft.Storage/storageAccounts@2025-01-01' = {
@@ -145,9 +158,13 @@ resource api 'Microsoft.App/containerApps@2025-01-01' = {
             { name: 'AFTER_PARTY_APPLICATION_ID', value: applicationClientId }
             { name: 'AFTER_PARTY_API_AUDIENCE', value: applicationClientId }
             { name: 'AFTER_PARTY_API_SCOPE', value: 'AfterParty.Operate' }
+            { name: 'AFTER_PARTY_RUNTIME_ID', value: apiResourceId }
+            { name: 'AFTER_PARTY_RUNTIME_IDENTITY_CLIENT_ID', value: runtimeIdentity.properties.clientId }
+            { name: 'AFTER_PARTY_RUNTIME_IDENTITY_PRINCIPAL_ID', value: runtimeIdentity.properties.principalId }
             { name: 'AFTER_PARTY_COMMIT', value: commit }
             { name: 'AFTER_PARTY_STATE_ACCOUNT', value: stateStorage.name }
             { name: 'AFTER_PARTY_STATE_CONTAINER', value: stateContainer.name }
+            { name: 'AFTER_PARTY_STATE_CONTAINER_URL', value: 'https://${stateStorage.name}.blob.${environment().suffixes.storage}/${stateContainer.name}' }
             { name: 'AFTER_PARTY_TENANT_LOCK_BLOB', value: 'locks/tenant-operation.json' }
             { name: 'AZURE_CLIENT_ID', value: runtimeIdentity.properties.clientId }
           ]
@@ -202,6 +219,7 @@ resource apiAuthentication 'Microsoft.App/containerApps/authConfigs@2025-01-01' 
           defaultAuthorizationPolicy: {
             allowedApplications: [
               applicationClientId
+              runtimeIdentity.properties.clientId
             ]
           }
         }
@@ -214,5 +232,8 @@ output apiId string = api.id
 output apiUrl string = 'https://${api.properties.configuration.ingress.fqdn}'
 output authConfigId string = apiAuthentication.id
 output identityId string = runtimeIdentity.id
+output identityClientId string = runtimeIdentity.properties.clientId
+output identityPrincipalId string = runtimeIdentity.properties.principalId
+output githubFederationId string = githubFederation.id
 output stateContainerId string = stateContainer.id
 output tenantLockBlobPath string = 'locks/tenant-operation.json'

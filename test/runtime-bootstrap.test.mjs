@@ -12,6 +12,8 @@ import {
 const tenantId = '11111111-1111-1111-1111-111111111111';
 const subscriptionId = '22222222-2222-2222-2222-222222222222';
 const applicationClientId = '33333333-3333-3333-3333-333333333333';
+const identityClientId = '44444444-4444-4444-8444-444444444444';
+const identityPrincipalId = '55555555-5555-4555-8555-555555555555';
 const commit = 'a'.repeat(40);
 const digest = 'b'.repeat(64);
 
@@ -98,6 +100,16 @@ function deploymentOutputs(overrides = {}) {
           type: 'String',
           value: `${resourceGroupId}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/after-party-identity`,
         },
+        identityClientId: { type: 'String', value: identityClientId },
+        identityPrincipalId: { type: 'String', value: identityPrincipalId },
+        githubFederationId: {
+          type: 'String',
+          value: `${resourceGroupId}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/after-party-identity/federatedIdentityCredentials/github-development-tenant`,
+        },
+        ownerRoleAssignmentId: {
+          type: 'String',
+          value: `/subscriptions/${subscriptionId}/providers/Microsoft.Authorization/roleAssignments/66666666-6666-4666-8666-666666666666`,
+        },
         stateContainerId: {
           type: 'String',
           value: `${resourceGroupId}/providers/Microsoft.Storage/storageAccounts/apstate/blobServices/default/containers/state`,
@@ -125,6 +137,8 @@ test('a verified selection produces one deterministic install-or-repair plan', (
   assert.equal(first.authorization.verified, true);
   assert.deepEqual(first.providerRegistrations, []);
   assert.match(first.authorization.requiredRole, /Contributor.*Role Based Access Control/i);
+  assert.match(first.resources.join(' '), /Owner assignment/i);
+  assert.match(first.resources.join(' '), /Graph application roles/i);
 });
 
 test('Contributor and RBAC Administrator capabilities combine without requiring Owner', () => {
@@ -221,6 +235,7 @@ test('missing runtime attachment or authentication capability fails before mutat
   for (const missingAction of [
     'Microsoft.App/managedEnvironments/join/action',
     'Microsoft.ManagedIdentity/userAssignedIdentities/assign/action',
+    'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write',
     'Microsoft.App/containerApps/authConfigs/read',
     'Microsoft.App/containerApps/authConfigs/write',
   ]) {
@@ -277,6 +292,10 @@ test('a complete deployment is verified against the exact plan identity', () => 
   assert.equal(result.subscriptionName, 'Student Lab');
   assert.equal(result.commit, commit);
   assert.equal(result.tenantLockBlobPath, 'locks/tenant-operation.json');
+  assert.equal(result.identityClientId, identityClientId);
+  assert.equal(result.identityPrincipalId, identityPrincipalId);
+  assert.match(result.githubFederationId, /federatedIdentityCredentials\/github-development-tenant$/);
+  assert.match(result.ownerRoleAssignmentId, /roleAssignments/i);
   assert.match(result.authConfigId, /authConfigs\/current$/);
   assert.match(result.apiUrl, /^https:/);
   assert.equal(Object.hasOwn(result, 'token'), false);
@@ -356,6 +375,9 @@ test('the Bicep runtime is minimal, passwordless, stateful, and versioned', asyn
   assert.match(runtime, /apiImage/);
   assert.match(runtime, /unauthenticatedClientAction: 'Return401'/);
   assert.match(runtime, /allowedApplications/);
+  assert.match(runtime, /github-development-tenant/);
+  assert.match(runtime, /environment:development-tenant/);
+  assert.match(main, /8e3af657-a8ff-443c-a75c-2fe8c4bcb635/);
   assert.match(runtime, /AFTER_PARTY_API_SCOPE/);
   const corsPolicy = runtime.match(/corsPolicy:\s*\{[\s\S]*?\n        \}/)?.[0] || '';
   assert.match(corsPolicy, /allowCredentials: false/);

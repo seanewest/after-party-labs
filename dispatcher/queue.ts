@@ -203,6 +203,7 @@ export interface ClaimOptions {
   consumer: string;
   leaseMs: number;
   recipient?: AgentName | string;
+  workerAvailabilities?: WorkerAvailability[];
 }
 
 export interface ListOptions {
@@ -667,23 +668,39 @@ export class DispatcherQueue {
     const recipient = options.recipient
       ? parseAgentName(options.recipient)
       : null;
+    const workerAvailabilities =
+      options.workerAvailabilities ?? WORKER_AVAILABILITIES.filter(
+        (availability) => availability !== "unavailable",
+      );
+    if (
+      workerAvailabilities.length === 0 ||
+      workerAvailabilities.some(
+        (availability) => !WORKER_AVAILABILITIES.includes(availability),
+      )
+    ) {
+      throw new QueueError("At least one valid worker availability is required.");
+    }
     const now = this.#now();
 
     return this.#transaction(() => {
       this.#requeueExpiredLeases(now);
+      const availabilityPlaceholders = workerAvailabilities.map(() => "?").join(", ");
       const row = this.#database
         .prepare(`
           SELECT * FROM messages
           WHERE state = 'queued'
             AND available_at <= ?
             AND (? IS NULL OR recipient = ?)
-            AND recipient NOT IN (
-              SELECT name FROM workers WHERE availability = 'unavailable'
+            AND recipient IN (
+              SELECT name FROM workers
+              WHERE availability IN (${availabilityPlaceholders})
             )
           ORDER BY available_at, created_at, id
           LIMIT 1
         `)
-        .get(now, recipient, recipient) as MessageRow | undefined;
+        .get(now, recipient, recipient, ...workerAvailabilities) as
+          | MessageRow
+          | undefined;
       if (!row) {
         return null;
       }

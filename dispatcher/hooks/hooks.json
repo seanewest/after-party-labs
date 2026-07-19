@@ -1,0 +1,38 @@
+{
+  "description": "After Party named-worker lifecycle hooks. Task #38 installs and trusts this reviewed template.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env node \"$(git rev-parse --show-toplevel)/dispatcher/hooks/lifecycle.ts\"",
+            "statusMessage": "Registering named After Party worker"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env node \"$(git rev-parse --show-toplevel)/dispatcher/hooks/lifecycle.ts\"",
+            "statusMessage": "Recording After Party worker activity"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env node \"$(git rev-parse --show-toplevel)/dispatcher/hooks/lifecycle.ts\"",
+            "statusMessage": "Completing After Party worker activity"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,8 +1,40 @@
-# Dispatcher queue core
+# Dispatcher and named workers
 
-This directory contains the local, durable handoff queue from Task #35 and the GitHub feedback
-adapter from Task #37. It deliberately does not attach to Codex sessions; Task #36 implements that
-runner against this core.
+This directory contains the local, durable handoff queue from Task #35, the named Codex worker
+runner from Task #36, and the GitHub feedback adapter from Task #37.
+
+## Named Codex workers
+
+Configure each worker once with an absolute Git worktree path kept in the local state database:
+
+    npm run party -- configure beavis /absolute/path/to/beavis
+    npm run party -- configure cornholio /absolute/path/to/cornholio
+
+Then `npm run party -- agent beavis` opens the normal interactive Codex TUI. The command hides tmux:
+an existing tmux session attaches, while a missing session starts Codex in the configured worktree
+and resumes its saved Codex session when one is known. Detaching or closing the outer terminal does
+not destroy a running worker, and the attached TUI still accepts normal human prompts, screenshots,
+and steering.
+
+`npm run party -- deliver` processes one ready handoff. `npm run party -- run` keeps processing, and
+`npm run party -- run --once` provides a one-cycle automation check. Busy workers are excluded from
+claims; workers without a tmux session are marked asleep and woken before delivery.
+
+Machine-specific worktree paths, Codex session IDs, and activity state live in
+`${XDG_STATE_HOME:-~/.local/state}/after-party/dispatcher.sqlite`, never in Git.
+
+## Lifecycle hook boundary
+
+The reviewed hook implementation is `hooks/lifecycle.ts`; `hooks/hooks.json` is a non-active
+installation template. Task #38 owns copying or linking that definition into a supported Codex hook
+location and completing the required trust review. Task #36 does not bypass or pre-approve hook
+trust.
+
+The trusted `SessionStart`, `UserPromptSubmit`, and `Stop` events register the named session and set
+idle/busy state without scraping terminal output. A dispatcher prompt includes an
+`AFTER_PARTY_HANDOFF_V1` envelope. `UserPromptSubmit` validates the complete envelope against the
+queue, records its durable receipt before processing, and blocks a retry whose message ID already
+has a receipt. `Stop` records final completion separately.
 
 ## Delivery contract
 
@@ -42,9 +74,8 @@ started, it takes the ambiguous escalation path.
 ## Worker and escalation boundary
 
 The same database holds one durable availability record for each named worker. The core recognizes
-`unknown`, `idle`, `busy`, `asleep`, and `unavailable`; it ignores stale observations and will not
-lease queued work to a worker currently marked `unavailable`. Task #36 owns observing real Codex
-sessions and updating these records.
+`unknown`, `idle`, `busy`, `asleep`, and `unavailable`; it ignores stale observations. Claims can be
+restricted atomically to selected states, so the runner leases only idle or sleeping workers.
 
 Escalations are durable, deduplicated records for worker unavailability, ambiguous ownership,
 repeated review cycles, delivery failures, or a manual intervention. They remain assigned
@@ -54,9 +85,10 @@ worker is genuinely unavailable.
 
 ## Extension points
 
-- A session runner calls `claimNext`, `beginDelivery`, `recordReceipt`, and `acknowledge`, then
-  `complete` after a successful turn or `reportTurnInterruption` after a structured failed turn.
-- A session runner calls `setWorkerAvailability` with its independently observed lifecycle state.
+- The session runner calls `claimNext`, `beginDelivery`, and `acknowledge`; the recipient hook calls
+  `recordReceipt`, making receipt persistence independent from the injecting process.
+- A structured turn outcome source calls `complete` after success or `reportTurnInterruption` after
+  failure; lifecycle hooks call `setWorkerAvailability` without classifying provider errors.
 - The GitHub poller records source events and advances each source checkpoint in one SQLite
   transaction, then calls `enqueue` with a durable `dedupeKey` derived from the GitHub event ID.
 - Either adapter calls `createEscalation`; Morpheus inspects and resolves the durable record.
@@ -66,8 +98,9 @@ worker is genuinely unavailable.
 The default database is `${XDG_STATE_HOME:-~/.local/state}/after-party/dispatcher.sqlite`. Set
 `PARTY_DISPATCHER_DB` or pass `--database` to use an isolated location.
 
-Run `npm run party -- help` for the compact CLI, `npm run check:types` for static checks, and
-`npm run test:dispatcher` for the offline queue suite.
+Run `npm run party -- help` for worker commands, `npm run party:queue -- help` for direct queue
+inspection, `npm run check:types` for static checks, and `npm run test:dispatcher` for the offline
+suite plus an auto-skipped local Codex/tmux smoke test when those tools are unavailable.
 
 ## GitHub feedback polling
 

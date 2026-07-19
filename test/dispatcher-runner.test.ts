@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 
 import { formatHandoff, parseHandoff } from "../dispatcher/handoff.ts";
@@ -260,7 +261,7 @@ test("human turns mark a worker busy, compact preserves the active turn, and Sto
   }
 });
 
-test("sleeping workers resume their saved session and receipt delivery before completion", async () => {
+test("structured delivery resumes a sleeping worker and completes from its event stream", async () => {
   const state = fixture();
   try {
     state.sessions.configureWorker("cornholio", state.worktree);
@@ -279,25 +280,6 @@ test("sleeping workers resume their saved session and receipt delivery before co
     });
 
     const terminal = new FakeTerminal();
-    terminal.onStart = () => {
-      state.tick();
-      lifecycle.handle({
-        hook_event_name: "SessionStart",
-        session_id: SESSION_B,
-        cwd: state.worktree,
-        source: "resume",
-      });
-    };
-    terminal.onInject = (_name, prompt) => {
-      state.tick();
-      lifecycle.handle({
-        hook_event_name: "UserPromptSubmit",
-        session_id: SESSION_B,
-        cwd: state.worktree,
-        turn_id: "delivery-turn",
-        prompt,
-      });
-    };
     const coordinator = new DeliveryCoordinator(
       state.queue,
       state.sessions,
@@ -307,7 +289,16 @@ test("sleeping workers resume their saved session and receipt delivery before co
         leaseMs: 500,
         pollMs: 1,
         turnOutcomeSource: {
-          async waitForOutcome(accepted) {
+          async waitForOutcome(accepted, worker, prompt) {
+            assert.equal(worker.sessionId, SESSION_B);
+            state.tick();
+            lifecycle.handle({
+              hook_event_name: "UserPromptSubmit",
+              session_id: SESSION_B,
+              cwd: state.worktree,
+              turn_id: "delivery-turn",
+              prompt,
+            });
             const outcome = new StructuredTurnOutcomeMonitor(state.queue, {
               messageId: accepted.id,
               attemptNumber: accepted.attemptCount,
@@ -324,8 +315,8 @@ test("sleeping workers resume their saved session and receipt delivery before co
     );
     const result = await coordinator.deliverOnce();
     assert.equal(result.outcome, "completed");
-    assert.equal(terminal.starts[0]?.sessionId, SESSION_B);
-    assert.equal(terminal.injections.length, 1);
+    assert.equal(terminal.starts.length, 0);
+    assert.equal(terminal.injections.length, 0);
     assert.equal(state.queue.getMessage(message.id)?.state, "completed");
 
     state.tick();
@@ -582,6 +573,123 @@ test("the party CLI consumes a structured Codex JSONL terminal outcome", () => {
     assert.equal(outcome.status, 0, outcome.stderr);
     assert.equal(JSON.parse(outcome.stdout).outcome, "completed");
     assert.equal(state.queue.getMessage(message.id)?.state, "completed");
+  } finally {
+    state.cleanup();
+  }
+});
+
+test("party deliver runs the correlated Codex JSON stream without a manual event step", () => {
+  const state = fixture();
+  try {
+    state.sessions.configureWorker("beavis", state.worktree);
+    state.sessions.registerSession({
+      name: "beavis",
+      cwd: state.worktree,
+      sessionId: SESSION_A,
+      hookRevision: "2",
+    });
+    state.queue.setWorkerAvailability("beavis", "idle");
+
+    const fakeCodex = join(state.directory, "codex");
+    const codexLog = join(state.directory, "codex.log");
+    const queueUrl = pathToFileURL(join(process.cwd(), "dispatcher", "queue.ts")).href;
+    writeFileSync(
+      fakeCodex,
+      `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+import { DispatcherQueue } from ${JSON.stringify(queueUrl)};
+const chunks = [];
+for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
+const prompt = Buffer.concat(chunks).toString("utf8");
+const header = prompt.split("\\n", 1)[0];
+const encoded = header.slice("[AFTER_PARTY_HANDOFF_V1:".length, -1);
+const envelope = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+const queue = new DispatcherQueue(process.env.PARTY_DISPATCHER_DB);
+queue.recordReceipt(envelope.messageId, envelope.recipient, { turnId: "fake-turn" });
+queue.close();
+appendFileSync(process.env.PARTY_CODEX_LOG, JSON.stringify(process.argv.slice(2)) + "\\n");
+console.log(JSON.stringify({ type: "thread.started", thread_id: process.env.PARTY_THREAD_ID }));
+console.log(JSON.stringify({ type: "turn.started" }));
+if (prompt.includes("structured retry")) {
+  console.log(JSON.stringify({ type: "turn.failed", turn_id: "retry-turn", error: { code: "serverOverloaded" } }));
+} else if (prompt.includes("structured escalation")) {
+  console.log(JSON.stringify({ type: "item.started", item: { id: "work-1", type: "reasoning" } }));
+  console.log(JSON.stringify({ type: "turn.failed", turn_id: "failed-turn", error: { code: "serverOverloaded" } }));
+} else {
+  console.log(JSON.stringify({ type: "turn.completed", turn_id: "completed-turn" }));
+}
+`,
+      "utf8",
+    );
+    chmodSync(fakeCodex, 0o755);
+    const script = join(process.cwd(), "dispatcher", "party.ts");
+    let consumer = 0;
+    const deliver = () => spawnSync(
+      process.execPath,
+      [
+        script,
+        "--database",
+        state.queue.databasePath,
+        "deliver",
+        "--consumer",
+        `runner-${consumer += 1}`,
+        "--lease-ms",
+        "500",
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${state.directory}:${process.env.PATH ?? ""}`,
+          PARTY_CODEX_LOG: codexLog,
+          PARTY_THREAD_ID: SESSION_A,
+        },
+      },
+    );
+
+    const completed = state.queue.enqueue({
+      sender: "morpheus",
+      recipient: "beavis",
+      payload: { text: "structured completion" },
+    });
+    const completedRun = deliver();
+    assert.equal(completedRun.status, 0, completedRun.stderr);
+    assert.equal(JSON.parse(completedRun.stdout).outcome, "completed");
+    assert.equal(state.queue.getMessage(completed.id)?.state, "completed");
+
+    const retry = state.queue.enqueue({
+      sender: "morpheus",
+      recipient: "beavis",
+      payload: { text: "structured retry" },
+    });
+    const retryRun = deliver();
+    assert.equal(retryRun.status, 0, retryRun.stderr);
+    assert.equal(JSON.parse(retryRun.stdout).outcome, "retry_safe");
+    assert.equal(state.queue.getMessage(retry.id)?.state, "queued");
+
+    const escalation = state.queue.enqueue({
+      sender: "morpheus",
+      recipient: "beavis",
+      payload: { text: "structured escalation" },
+    });
+    const escalationRun = deliver();
+    assert.equal(escalationRun.status, 1, escalationRun.stderr);
+    assert.equal(JSON.parse(escalationRun.stdout).outcome, "failed");
+    assert.equal(state.queue.getMessage(escalation.id)?.state, "failed");
+    assert.equal(
+      state.queue.inspect(escalation.id).interruptions[0]?.workStarted,
+      true,
+    );
+
+    const invocations = readFileSync(codexLog, "utf8").trim().split("\n");
+    assert.equal(invocations.length, 3);
+    assert.deepEqual(JSON.parse(invocations[0]), [
+      "exec",
+      "resume",
+      "--json",
+      SESSION_A,
+      "-",
+    ]);
   } finally {
     state.cleanup();
   }

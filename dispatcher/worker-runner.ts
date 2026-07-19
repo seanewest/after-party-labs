@@ -73,7 +73,7 @@ export class DeliveryCoordinator {
         this.queue.setWorkerAvailability(worker.name, "unavailable", {
           reason: `Configured worktree ${worker.worktreePath} is missing.`,
         });
-      } else if (!this.terminal.hasSession(worker.name)) {
+      } else if (!this.#turnOutcomeSource && !this.terminal.hasSession(worker.name)) {
         this.queue.setWorkerAvailability(worker.name, "asleep");
       }
     }
@@ -92,6 +92,22 @@ export class DeliveryCoordinator {
 
     try {
       const worker = this.sessions.requireWorker(message.recipient);
+      const prompt = formatHandoff(this.queue.inspect(message.id).message);
+      if (this.#turnOutcomeSource) {
+        this.queue.beginDelivery(message.id, this.#consumer);
+        const outcome = await this.#withLeaseRenewal(
+          message.id,
+          this.#turnOutcomeSource.waitForOutcome(message, worker, prompt),
+        );
+        if (outcome.outcome === "completed") {
+          return { outcome: "completed", message: outcome.message };
+        }
+        if (outcome.outcome === "retry_safe") {
+          return { outcome: "retry_safe", message: outcome.result.message };
+        }
+        return { outcome: "failed", message: outcome.result.message };
+      }
+
       this.terminal.start(worker);
       const ready = await this.#waitForIdle(
         message.recipient,
@@ -103,7 +119,7 @@ export class DeliveryCoordinator {
       }
 
       this.queue.beginDelivery(message.id, this.#consumer);
-      this.terminal.inject(message.recipient, formatHandoff(this.queue.inspect(message.id).message));
+      this.terminal.inject(message.recipient, prompt);
       const receipted = await this.#waitForReceipt(message.id);
       if (!receipted) {
         return this.#fail(
@@ -115,24 +131,28 @@ export class DeliveryCoordinator {
       if (current?.state === "receipted") {
         this.queue.acknowledge(message.id);
       }
-      if (this.#turnOutcomeSource) {
-        const accepted = this.queue.getMessage(message.id);
-        if (!accepted) {
-          throw new Error(`Message ${message.id} disappeared after receipt.`);
-        }
-        const outcome = await this.#turnOutcomeSource.waitForOutcome(accepted);
-        if (outcome.outcome === "completed") {
-          return { outcome: "completed", message: outcome.message };
-        }
-        if (outcome.outcome === "retry_safe") {
-          return { outcome: "retry_safe", message: outcome.result.message };
-        }
-        return { outcome: "failed", message: outcome.result.message };
-      }
       return { outcome: "receipted", message: this.queue.getMessage(message.id) };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       return this.#fail(message, reason);
+    }
+  }
+
+  async #withLeaseRenewal<T>(messageId: string, operation: Promise<T>): Promise<T> {
+    const interval = setInterval(() => {
+      const current = this.queue.getMessage(messageId);
+      if (
+        current?.state === "delivering" &&
+        current.leaseOwner === this.#consumer
+      ) {
+        this.queue.renewLease(messageId, this.#consumer, this.#leaseMs);
+      }
+    }, Math.max(25, Math.floor(this.#leaseMs / 3)));
+    interval.unref();
+    try {
+      return await operation;
+    } finally {
+      clearInterval(interval);
     }
   }
 

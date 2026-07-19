@@ -106,8 +106,10 @@ export {
   type DeliveryResult,
 } from "./worker-runner.ts";
 export {
+  CodexExecTurnOutcomeSource,
   parseJsonLines,
   StructuredTurnOutcomeMonitor,
+  type CodexExecTurnOutcomeSourceOptions,
   type StructuredTurnContext,
   type StructuredTurnResult,
   type TurnOutcomeSource,

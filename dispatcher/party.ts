@@ -9,7 +9,11 @@ import { DispatcherQueue } from "./queue.ts";
 import { parseAgentName } from "./registry.ts";
 import { WorkerSessionStore } from "./session-store.ts";
 import { TmuxWorkerTerminal } from "./tmux-runner.ts";
-import { parseJsonLines, StructuredTurnOutcomeMonitor } from "./turn-outcome.ts";
+import {
+  CodexExecTurnOutcomeSource,
+  parseJsonLines,
+  StructuredTurnOutcomeMonitor,
+} from "./turn-outcome.ts";
 import { DeliveryCoordinator } from "./worker-runner.ts";
 
 interface ParsedArguments {
@@ -120,6 +124,7 @@ function coordinatorFor(
     startupTimeoutMs: integerOption(parsed, "startup-timeout-ms"),
     receiptTimeoutMs: integerOption(parsed, "receipt-timeout-ms"),
     pollMs: integerOption(parsed, "poll-ms"),
+    turnOutcomeSource: new CodexExecTurnOutcomeSource(queue),
   });
 }
 
@@ -218,8 +223,8 @@ Global options:
   --database PATH   Override PARTY_DISPATCHER_DB and the default state path.
 
 "party agent NAME" hides tmux while preserving the normal interactive Codex TUI.
-Closing or detaching the terminal leaves the worker running; a missing tmux session
-resumes its saved Codex session when one has been registered by lifecycle hooks.
+Queued deliver/run work resumes the same saved session through structured Codex JSON
+events. Closing or detaching the interactive terminal leaves its tmux session running.
 `;
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

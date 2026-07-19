@@ -1,3 +1,6 @@
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
+
 import {
   DispatcherQueue,
   QueueError,
@@ -5,6 +8,7 @@ import {
   type TurnInterruptionResult,
 } from "./queue.ts";
 import { parseAgentName, type AgentName } from "./registry.ts";
+import type { WorkerSessionRecord } from "./session-store.ts";
 
 export interface StructuredTurnContext {
   messageId: string;
@@ -20,7 +24,16 @@ export type StructuredTurnResult =
   | { outcome: "retry_safe" | "escalated"; result: TurnInterruptionResult };
 
 export interface TurnOutcomeSource {
-  waitForOutcome(message: QueueMessage): Promise<StructuredTurnResult>;
+  waitForOutcome(
+    message: QueueMessage,
+    worker: WorkerSessionRecord,
+    prompt: string,
+  ): Promise<StructuredTurnResult>;
+}
+
+export interface CodexExecTurnOutcomeSourceOptions {
+  codexCommand?: string;
+  retryAfterMs?: number;
 }
 
 interface ParsedTerminalEvent {
@@ -41,6 +54,80 @@ const TRANSIENT_ERROR_CODES = new Set([
   "responseTooManyFailedAttempts",
   "internalServerError",
 ]);
+
+export class CodexExecTurnOutcomeSource implements TurnOutcomeSource {
+  private readonly queue: DispatcherQueue;
+  #codexCommand: string;
+  #retryAfterMs: number | undefined;
+
+  constructor(
+    queue: DispatcherQueue,
+    options: CodexExecTurnOutcomeSourceOptions = {},
+  ) {
+    this.queue = queue;
+    this.#codexCommand = nonEmpty(options.codexCommand ?? "codex", "Codex command");
+    this.#retryAfterMs = options.retryAfterMs;
+  }
+
+  async waitForOutcome(
+    message: QueueMessage,
+    worker: WorkerSessionRecord,
+    prompt: string,
+  ): Promise<StructuredTurnResult> {
+    const monitor = new StructuredTurnOutcomeMonitor(this.queue, {
+      messageId: message.id,
+      attemptNumber: message.attemptCount,
+      reportedBy: message.recipient,
+      streamId: `codex-exec:${message.id}:${message.attemptCount}`,
+      retryAfterMs: this.#retryAfterMs,
+    });
+    const arguments_ = worker.sessionId
+      ? ["exec", "resume", "--json", worker.sessionId, "-"]
+      : ["exec", "--json", "--color", "never", "-C", worker.worktreePath, "-"];
+    const child = spawn(this.#codexCommand, arguments_, {
+      cwd: worker.worktreePath,
+      env: {
+        ...process.env,
+        PARTY_DISPATCHER_DB: this.queue.databasePath,
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+    let result: StructuredTurnResult | null = null;
+    let streamError: Error | null = null;
+    lines.on("line", (line) => {
+      if (!line.trim() || streamError) {
+        return;
+      }
+      try {
+        const [event] = parseJsonLines(line);
+        result = monitor.consume(event) ?? result;
+      } catch (error) {
+        streamError = error instanceof Error ? error : new Error(String(error));
+        child.kill("SIGTERM");
+      }
+    });
+    child.stderr.resume();
+    child.stdin.end(prompt);
+
+    const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+      (resolve, reject) => {
+        child.once("error", reject);
+        child.once("close", (code, signal) => resolve({ code, signal }));
+      },
+    );
+    if (streamError) {
+      throw streamError;
+    }
+    if (result) {
+      return result;
+    }
+    const exitLabel = exit.signal ? `signal ${exit.signal}` : `exit ${String(exit.code)}`;
+    throw new QueueError(
+      `Codex structured turn ended with ${exitLabel} and no terminal event.`,
+    );
+  }
+}
 
 export class StructuredTurnOutcomeMonitor {
   private readonly queue: DispatcherQueue;

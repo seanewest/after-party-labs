@@ -69,6 +69,12 @@ The default database is `${XDG_STATE_HOME:-~/.local/state}/after-party/dispatche
 Run `npm run party -- help` for the compact CLI, `npm run check:types` for static checks, and
 `npm run test:dispatcher` for the offline queue suite.
 
+## Future direction
+
+A possible task-bound context model and private browser-terminal gateway are recorded in
+[the dispatcher v2 proposal](../docs/proposals/task-context-dispatcher-v2.md). The proposal is not
+adopted and does not change the named-worker v1 contract or its current Tasks.
+
 ## GitHub feedback polling
 
 `npm run poll:github -- --owner seanewest --project 1` runs one bounded polling pass using the

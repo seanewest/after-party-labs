@@ -85,6 +85,119 @@ h1 {
   backdrop-filter: blur(1rem);
 }
 
+.experiments {
+  display: grid;
+  gap: 1.5rem;
+  margin-top: clamp(2rem, 6vw, 4rem);
+}
+
+.section-heading {
+  max-width: 46rem;
+}
+
+.experiment-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 21rem), 1fr));
+  gap: 1rem;
+}
+
+.experiment-grid:empty::before {
+  padding: 1.25rem;
+  border: 1px dashed #3c4059;
+  border-radius: 0.75rem;
+  color: #8f96ae;
+  content: "No experiments are available yet.";
+}
+
+.experiment-card {
+  display: grid;
+  align-content: start;
+  gap: 1rem;
+  padding: 1.4rem;
+  border: 1px solid #292d42;
+  border-radius: 0.9rem;
+  background: rgba(13, 16, 27, 0.92);
+}
+
+.experiment-card[data-effect="write"] {
+  border-top-color: #e4a85d;
+}
+
+.experiment-title {
+  margin: 0;
+  font-size: 1.3rem;
+}
+
+.experiment-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.experiment-badge {
+  padding: 0.3rem 0.55rem;
+  border: 1px solid #3c4059;
+  border-radius: 999px;
+  color: #c7cbdf;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.experiment-badge[data-effect="read"] {
+  border-color: rgba(142, 230, 209, 0.45);
+  color: #8ee6d1;
+}
+
+.experiment-badge[data-effect="write"] {
+  border-color: rgba(228, 168, 93, 0.55);
+  color: #f0c58e;
+}
+
+.experiment-description,
+.experiment-status-message,
+.experiment-guidance {
+  margin: 0;
+  color: #adb3ca;
+  line-height: 1.55;
+}
+
+.experiment-status {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.experiment-status-label {
+  color: #f7f8ff;
+}
+
+.experiment-result {
+  display: grid;
+  grid-template-columns: minmax(7rem, auto) minmax(0, 1fr);
+  gap: 0.55rem 1rem;
+  margin: 0;
+  padding: 1rem;
+  border: 1px solid #292d42;
+  border-radius: 0.65rem;
+  background: #090c15;
+}
+
+.experiment-result[hidden],
+.experiment-guidance[hidden] {
+  display: none;
+}
+
+.experiment-result dd {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.experiment-guidance {
+  color: #f0c58e;
+}
+
+.experiment-action {
+  justify-self: start;
+}
+
 h2 {
   margin-bottom: 0.6rem;
   font-size: clamp(1.9rem, 5vw, 3rem);
@@ -294,8 +407,13 @@ code {
   }
 
   .account-picker .button,
-  .actions .button {
+  .actions .button,
+  .experiment-action {
     width: 100%;
+  }
+
+  .experiment-result {
+    grid-template-columns: 1fr;
   }
 
   .permission-list {

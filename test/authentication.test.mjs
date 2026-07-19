@@ -6,7 +6,12 @@ import {
   describeAccount,
   formatAuthenticationError,
 } from '../site/authentication.js';
-import { createInstallationController, createSignInController } from '../site/app.js';
+import {
+  createInstallationController,
+  createSignInController,
+  createView,
+  handleAuthenticationRedirectError,
+} from '../site/app.js';
 
 const configuration = {
   authority: 'https://login.microsoftonline.com/organizations',
@@ -24,7 +29,13 @@ function account(overrides = {}) {
   };
 }
 
-function fakeMsal({ accounts = [], activeAccount = null, redirectResult = null, silentError = null } = {}) {
+function fakeMsal({
+  accounts = [],
+  activeAccount = null,
+  redirectResult = null,
+  redirectError = null,
+  silentError = null,
+} = {}) {
   const calls = [];
   let selectedAccount = activeAccount;
   let receivedConfiguration;
@@ -34,6 +45,7 @@ function fakeMsal({ accounts = [], activeAccount = null, redirectResult = null, 
     },
     async handleRedirectPromise() {
       calls.push(['handleRedirectPromise']);
+      if (redirectError) throw redirectError;
       return redirectResult;
     },
     getAllAccounts() {
@@ -110,6 +122,23 @@ test('redirect completion selects and reports the returned account', async () =>
 
   assert.equal(state.status, 'signed-in');
   assert.equal(state.account, selected);
+  assert.deepEqual(msal.calls.at(-1), ['setActiveAccount', selected]);
+});
+
+test('redirect failure preserves the cached identity for verification-specific recovery', async () => {
+  const selected = account();
+  const redirectError = { errorCode: 'user_cancelled' };
+  const msal = fakeMsal({ accounts: [selected], redirectError });
+  const authentication = createAuthentication({
+    configuration,
+    createPublicClientApplication: msal.createPublicClientApplication,
+  });
+
+  const state = await authentication.initialize();
+
+  assert.equal(state.status, 'signed-in');
+  assert.equal(state.account, selected);
+  assert.equal(state.redirectError, redirectError);
   assert.deepEqual(msal.calls.at(-1), ['setActiveAccount', selected]);
 });
 
@@ -520,13 +549,12 @@ test('permission verification resumes only after the user-triggered Graph redire
   ]);
 });
 
-test('verification continuation fails safely on cancellation, network failure, mismatch, and expiry', async () => {
+test('verification continuation preserves the correct retry action after cancellation and failure', async () => {
   const selected = account({ tenantId: '33333333-3333-3333-3333-333333333333' });
-  for (const scenario of ['cancelled', 'network', 'mismatch', 'expired']) {
+  for (const scenario of ['cancelled', 'network', 'mismatch']) {
     const storage = memoryStorage();
     const errors = [];
     let currentAccount = selected;
-    let currentTime = 1_000;
     const controller = createInstallationController({
       authentication: {
         getState: () => ({ status: 'signed-in', account: currentAccount }),
@@ -544,11 +572,10 @@ test('verification continuation fails safely on cancellation, network failure, m
       },
       scopes: ['User.Read'],
       storage,
-      now: () => currentTime,
       view: {
         setInstallationBusy() {},
         renderInstallation() {},
-        renderInstallationError: (message) => errors.push(message),
+        renderInstallationError: (message, options) => errors.push({ message, options }),
       },
       currentUrl: () => 'https://example.test/',
     });
@@ -559,13 +586,162 @@ test('verification continuation fails safely on cancellation, network failure, m
         tenantId: '44444444-4444-4444-4444-444444444444',
       });
     }
-    if (scenario === 'expired') currentTime += 10 * 60 * 1000 + 1;
     await controller.continueVerification();
     assert.equal(errors.length, 1);
-    assert.doesNotMatch(errors[0], /secret|undefined|object/i);
+    assert.doesNotMatch(errors[0].message, /secret|undefined|object/i);
     if (scenario === 'cancelled') {
-      assert.match(errors[0], /verification was cancelled/i);
-      assert.doesNotMatch(errors[0], /permissions were not granted/i);
+      assert.match(errors[0].message, /verification was cancelled/i);
+      assert.doesNotMatch(errors[0].message, /permissions were not granted/i);
     }
+    assert.equal(
+      errors[0].options.verificationAction,
+      scenario === 'mismatch' ? 'none' : 'continue',
+    );
   }
+});
+
+test('an expired continuation restarts verification without repeating admin consent', async () => {
+  const selected = account({ tenantId: '33333333-3333-3333-3333-333333333333' });
+  const storage = memoryStorage();
+  let currentTime = 1_000;
+  let redirects = 0;
+  const errors = [];
+  let callbackAvailable = true;
+  const controller = createInstallationController({
+    authentication: {
+      getState: () => ({ status: 'signed-in', account: selected }),
+      acquireGraphToken: async () => { throw { code: 'interaction_required' }; },
+      acquireGraphTokenRedirect: async () => { redirects += 1; },
+    },
+    installation: {
+      consumeCallback() {
+        if (!callbackAvailable) return null;
+        callbackAvailable = false;
+        return {
+          accountId: selected.homeAccountId,
+          tenantId: selected.tenantId,
+        };
+      },
+    },
+    scopes: ['User.Read'],
+    storage,
+    now: () => currentTime,
+    view: {
+      setInstallationBusy() {},
+      renderInstallation() {},
+      renderInstallationError: (message, options) => errors.push({ message, options }),
+    },
+    currentUrl: () => 'https://example.test/',
+  });
+
+  await controller.initialize();
+  currentTime += 10 * 60 * 1000 + 1;
+  await controller.initialize();
+  assert.equal(errors.at(-1).options.verificationAction, 'restart');
+
+  await controller.continueVerification();
+  assert.equal(redirects, 1);
+  assert.equal(errors.length, 1);
+  const pending = JSON.parse(storage.getItem('after-party.permission-verification'));
+  assert.equal(pending.createdAt, currentTime);
+  assert.equal(pending.callback, null);
+});
+
+test('redirect-return cancellation remains a verification retry when pending state exists', async () => {
+  const selected = account({ tenantId: '33333333-3333-3333-3333-333333333333' });
+  const storage = memoryStorage();
+  const errors = [];
+  const genericErrors = [];
+  const redirectError = { errorCode: 'access_denied' };
+  const msal = fakeMsal({ accounts: [selected], redirectError });
+  const authentication = createAuthentication({
+    configuration,
+    createPublicClientApplication: msal.createPublicClientApplication,
+  });
+  storage.setItem('after-party.permission-verification', JSON.stringify({
+    accountId: selected.homeAccountId,
+    tenantId: selected.tenantId,
+    callback: { accountId: selected.homeAccountId, tenantId: selected.tenantId },
+    createdAt: 1_000,
+    scopes: ['User.Read'],
+  }));
+  const view = {
+    setInstallationBusy() {},
+    renderInstallation() {},
+    renderInstallationError: (message, options) => errors.push({ message, options }),
+    renderError: (message) => genericErrors.push(message),
+  };
+  const controller = createInstallationController({
+    authentication,
+    installation: {},
+    scopes: ['User.Read'],
+    storage,
+    now: () => 1_000,
+    view,
+    currentUrl: () => 'https://example.test/',
+  });
+
+  const authenticationState = await authentication.initialize();
+  assert.equal(handleAuthenticationRedirectError({
+    authenticationState,
+    installationController: controller,
+    view,
+  }), true);
+  assert.match(errors[0].message, /verification was cancelled/i);
+  assert.doesNotMatch(errors[0].message, /permissions were not granted/i);
+  assert.equal(errors[0].options.verificationAction, 'continue');
+  assert.deepEqual(genericErrors, []);
+  assert.ok(storage.getItem('after-party.permission-verification'));
+});
+
+test('verification errors keep approval hidden and expose the correct view action', () => {
+  const ids = [
+    'auth-status',
+    'connect-tenant',
+    'sign-out',
+    'approve-permissions',
+    'continue-verification',
+    'installation-status',
+    'permission-summary',
+    'account-picker',
+    'account-select',
+    'use-account',
+    'account-details',
+    'account-name',
+    'account-username',
+    'tenant-id',
+  ];
+  const elements = new Map(ids.map((id) => [id, {
+    dataset: {},
+    disabled: false,
+    hidden: false,
+    textContent: '',
+    replaceChildren() {},
+  }]));
+  const view = createView({
+    getElementById: (id) => elements.get(id) ?? null,
+    createElement: () => ({ textContent: '', value: '' }),
+  });
+  view.render({ status: 'signed-in', account: account(), accounts: [account()] });
+  view.renderInstallation({ status: 'verification-required', tenantId: 'tenant-1' });
+
+  view.renderInstallationError('Permission verification was cancelled.', {
+    verificationAction: 'continue',
+  });
+  assert.equal(elements.get('approve-permissions').hidden, true);
+  assert.equal(elements.get('continue-verification').hidden, false);
+  assert.equal(
+    elements.get('continue-verification').textContent,
+    'Continue permission verification',
+  );
+
+  view.renderInstallationError('The verification continuation expired.', {
+    verificationAction: 'restart',
+  });
+  assert.equal(elements.get('approve-permissions').hidden, true);
+  assert.equal(elements.get('continue-verification').hidden, false);
+  assert.equal(
+    elements.get('continue-verification').textContent,
+    'Restart permission verification',
+  );
 });

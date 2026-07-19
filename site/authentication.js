@@ -137,7 +137,13 @@ export function createAuthentication({ configuration, createPublicClientApplicat
   return {
     async initialize() {
       await client.initialize();
-      const redirectResult = await client.handleRedirectPromise();
+      let redirectResult;
+      let redirectError;
+      try {
+        redirectResult = await client.handleRedirectPromise();
+      } catch (error) {
+        redirectError = error;
+      }
       if (redirectResult?.account) {
         client.setActiveAccount(redirectResult.account);
       } else if (!client.getActiveAccount()) {
@@ -146,7 +152,8 @@ export function createAuthentication({ configuration, createPublicClientApplicat
           client.setActiveAccount(accounts[0]);
         }
       }
-      return currentState(client);
+      const state = currentState(client);
+      return redirectError ? { ...state, redirectError } : state;
     },
 
     getState() {

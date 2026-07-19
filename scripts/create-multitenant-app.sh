@@ -5,11 +5,16 @@
 #   APP_DISPLAY_NAME='After Party' \
 #   SPA_REDIRECT_URI='https://example.github.io/after-party/' \
 #   bash scripts/create-multitenant-app.sh
+# To reconcile an existing registration, set AFTER_PARTY_APP_ID,
+# EXPECTED_TENANT_ID, and CONFIRM_RECONCILE to the exact known values.
 (
   set -euo pipefail
 
   APP_DISPLAY_NAME="${APP_DISPLAY_NAME:-After Party}"
   SPA_REDIRECT_URI="${SPA_REDIRECT_URI:-https://seanewest.github.io/after-party-labs/}"
+  AFTER_PARTY_APP_ID="${AFTER_PARTY_APP_ID:-}"
+  EXPECTED_TENANT_ID="${EXPECTED_TENANT_ID:-}"
+  CONFIRM_RECONCILE="${CONFIRM_RECONCILE:-}"
   LOCAL_SPA_REDIRECT_URI='http://127.0.0.1:4173/'
   graph_applications_url='https://graph.microsoft.com/v1.0/applications'
   microsoft_graph_app_id='00000003-0000-0000-c000-000000000000'
@@ -66,6 +71,24 @@
     exit 1
   fi
 
+  uuid_pattern='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+  operation='create'
+  if [[ -n "$AFTER_PARTY_APP_ID" || -n "$EXPECTED_TENANT_ID" || -n "$CONFIRM_RECONCILE" ]]; then
+    operation='reconcile'
+    if [[ ! "$AFTER_PARTY_APP_ID" =~ $uuid_pattern ]]; then
+      echo 'AFTER_PARTY_APP_ID must be the existing application client ID in UUID form.' >&2
+      exit 1
+    fi
+    if [[ ! "$EXPECTED_TENANT_ID" =~ $uuid_pattern ]]; then
+      echo 'EXPECTED_TENANT_ID must be the existing application home tenant ID in UUID form.' >&2
+      exit 1
+    fi
+    if [[ "$CONFIRM_RECONCILE" != "$AFTER_PARTY_APP_ID" ]]; then
+      echo 'Set CONFIRM_RECONCILE to the same client ID to authorize reconciliation.' >&2
+      exit 1
+    fi
+  fi
+
   resource_access=''
   for permission_id in "${microsoft_graph_permission_ids[@]}"; do
     if [[ -n "$resource_access" ]]; then
@@ -86,34 +109,34 @@
     exit 1
   fi
 
+  if [[ "$operation" == 'reconcile' && "$tenant_id" != "$EXPECTED_TENANT_ID" ]]; then
+    echo "Signed into tenant $tenant_id, but expected application home tenant $EXPECTED_TENANT_ID." >&2
+    echo 'No changes were made. Switch tenants and retry.' >&2
+    exit 1
+  fi
+
   if ! token_expiry="$(az account get-access-token --resource-type ms-graph --query expiresOn --output tsv 2>/dev/null)" ||
      [[ -z "$token_expiry" ]]; then
     echo 'The Azure CLI Microsoft Graph token cache is stale. Refresh Cloud Shell or run az login, then retry.' >&2
     exit 1
   fi
 
-  existing_count="$(
-    az ad app list \
-      --display-name "$APP_DISPLAY_NAME" \
-      --query 'length(@)' \
-      --output tsv \
-      --only-show-errors
-  )"
-  if (( existing_count > 0 )); then
-    echo "An app registration named '$APP_DISPLAY_NAME' already exists in tenant $tenant_id." >&2
-    echo 'No changes were made. Use a different APP_DISPLAY_NAME or inspect the existing registration.' >&2
-    exit 1
-  fi
-
-  request_body="$(printf \
+  create_request_body="$(printf \
     '{"displayName":"%s","signInAudience":"AzureADMultipleOrgs","spa":{"redirectUris":["%s","%s"]},"web":{"homePageUrl":"%s"},"requiredResourceAccess":%s}' \
     "$APP_DISPLAY_NAME" \
     "$SPA_REDIRECT_URI" \
     "$LOCAL_SPA_REDIRECT_URI" \
     "$SPA_REDIRECT_URI" \
     "$required_resource_access")"
+  reconcile_request_body="$(printf \
+    '{"signInAudience":"AzureADMultipleOrgs","spa":{"redirectUris":["%s","%s"]},"web":{"homePageUrl":"%s"},"requiredResourceAccess":%s}' \
+    "$SPA_REDIRECT_URI" \
+    "$LOCAL_SPA_REDIRECT_URI" \
+    "$SPA_REDIRECT_URI" \
+    "$required_resource_access")"
 
   created_app_id=''
+  target_app_id=''
   cleanup_on_error() {
     status=$?
     trap - EXIT
@@ -126,36 +149,103 @@
   }
   trap cleanup_on_error EXIT
 
-  created_app_id="$(
+  if [[ "$operation" == 'create' ]]; then
+    existing_count="$(
+      az ad app list \
+        --display-name "$APP_DISPLAY_NAME" \
+        --query 'length(@)' \
+        --output tsv \
+        --only-show-errors
+    )"
+    if (( existing_count > 0 )); then
+      echo "An app registration named '$APP_DISPLAY_NAME' already exists in tenant $tenant_id." >&2
+      echo 'No changes were made. Use the exact-ID reconciliation mode or a different APP_DISPLAY_NAME.' >&2
+      exit 1
+    fi
+
+    created_app_id="$(
+      az rest \
+        --method POST \
+        --url "$graph_applications_url" \
+        --headers 'Content-Type=application/json' \
+        --body "$create_request_body" \
+        --query appId \
+        --output tsv \
+        --only-show-errors
+    )"
+    target_app_id="$created_app_id"
+  else
+    existing_app_id="$(
+      az ad app show \
+        --id "$AFTER_PARTY_APP_ID" \
+        --query appId \
+        --output tsv \
+        --only-show-errors 2>/dev/null || true
+    )"
+    existing_display_name="$(
+      az ad app show \
+        --id "$AFTER_PARTY_APP_ID" \
+        --query displayName \
+        --output tsv \
+        --only-show-errors 2>/dev/null || true
+    )"
+    existing_object_id="$(
+      az ad app show \
+        --id "$AFTER_PARTY_APP_ID" \
+        --query id \
+        --output tsv \
+        --only-show-errors 2>/dev/null || true
+    )"
+    if [[ "$existing_app_id" != "$AFTER_PARTY_APP_ID" ||
+          "$existing_display_name" != "$APP_DISPLAY_NAME" ||
+          ! "$existing_object_id" =~ $uuid_pattern ]]; then
+      echo "Client ID $AFTER_PARTY_APP_ID did not resolve to the expected '$APP_DISPLAY_NAME' application." >&2
+      echo 'No changes were made.' >&2
+      exit 1
+    fi
+
+    existing_service_principal_count="$(
+      az ad sp list \
+        --filter "appId eq '$AFTER_PARTY_APP_ID'" \
+        --query 'length(@)' \
+        --output tsv \
+        --only-show-errors
+    )"
+    if [[ ! "$existing_service_principal_count" =~ ^[0-9]+$ ||
+          "$existing_service_principal_count" != '0' ]]; then
+      echo 'The existing application already has a tenant service principal; refusing developer-app reconciliation.' >&2
+      echo 'No changes were made.' >&2
+      exit 1
+    fi
+
     az rest \
-      --method POST \
-      --url "$graph_applications_url" \
+      --method PATCH \
+      --url "$graph_applications_url/$existing_object_id" \
       --headers 'Content-Type=application/json' \
-      --body "$request_body" \
-      --query appId \
-      --output tsv \
-      --only-show-errors
-  )"
+      --body "$reconcile_request_body" \
+      --only-show-errors >/dev/null
+    target_app_id="$AFTER_PARTY_APP_ID"
+  fi
 
   verified='false'
   for _ in {1..10}; do
     actual_audience="$(
       az ad app show \
-        --id "$created_app_id" \
+        --id "$target_app_id" \
         --query signInAudience \
         --output tsv \
         --only-show-errors 2>/dev/null || true
     )"
     actual_redirect_uris="$(
       az ad app show \
-        --id "$created_app_id" \
+        --id "$target_app_id" \
         --query 'join(`,`, sort(spa.redirectUris))' \
         --output tsv \
         --only-show-errors 2>/dev/null || true
     )"
     actual_permission_ids="$(
       az ad app show \
-        --id "$created_app_id" \
+        --id "$target_app_id" \
         --query "join(',', sort(requiredResourceAccess[?resourceAppId == '$microsoft_graph_app_id'].resourceAccess[].id[]))" \
         --output tsv \
         --only-show-errors 2>/dev/null || true
@@ -170,13 +260,13 @@
   done
 
   if [[ "$verified" != 'true' ]]; then
-    echo 'The new app registration could not be verified with the requested settings.' >&2
+    echo 'The app registration could not be verified with the requested settings.' >&2
     exit 1
   fi
 
   service_principal_count="$(
     az ad sp list \
-      --filter "appId eq '$created_app_id'" \
+      --filter "appId eq '$target_app_id'" \
       --query 'length(@)' \
       --output tsv \
       --only-show-errors
@@ -188,9 +278,13 @@
 
   trap - EXIT
 
-  printf 'Created and verified the multitenant app registration.\n'
+  if [[ "$operation" == 'create' ]]; then
+    printf 'Created and verified the multitenant app registration.\n'
+  else
+    printf 'Reconciled and verified the existing multitenant app registration.\n'
+  fi
   printf 'Display name: %s\n' "$APP_DISPLAY_NAME"
-  printf 'Application (client) ID: %s\n' "$created_app_id"
+  printf 'Application (client) ID: %s\n' "$target_app_id"
   printf 'Home tenant ID: %s\n' "$tenant_id"
   printf 'SPA redirect URI: %s\n' "$SPA_REDIRECT_URI"
   printf 'Local redirect URI: %s\n' "$LOCAL_SPA_REDIRECT_URI"

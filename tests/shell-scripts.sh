@@ -89,6 +89,9 @@ case "${1:-}:${2:-}:${3:-}" in
       appId)
         printf '%s\n' "${AZ_MOCK_APP_ID:-11111111-1111-1111-1111-111111111111}"
         ;;
+      id)
+        printf '%s\n' "${AZ_MOCK_OBJECT_ID:-44444444-4444-4444-4444-444444444444}"
+        ;;
       signInAudience)
         printf '%s\n' 'AzureADMultipleOrgs'
         ;;
@@ -123,6 +126,7 @@ chmod +x "$mock_bin/az"
 mock_path="$mock_bin:$PATH"
 app_id='11111111-1111-1111-1111-111111111111'
 tenant_id='22222222-2222-2222-2222-222222222222'
+object_id='44444444-4444-4444-4444-444444444444'
 redirect_uri='https://example.test/after-party/'
 permission_ids=(
   'e1fe6dd8-ba31-4d61-89e7-88639da4683d'
@@ -208,6 +212,91 @@ fi
 assert_contains "$existing_app_output" "An app registration named 'After Party' already exists"
 assert_log_excludes 'rest --method POST'
 printf 'PASS: create script stops before mutation when the app already exists\n'
+
+: >"$AZ_MOCK_LOG"
+reconcile_output="$(
+  env \
+    PATH="$mock_path" \
+    AFTER_PARTY_APP_ID="$app_id" \
+    EXPECTED_TENANT_ID="$tenant_id" \
+    CONFIRM_RECONCILE="$app_id" \
+    SPA_REDIRECT_URI="$redirect_uri" \
+    AZ_MOCK_PERMISSION_IDS="$permission_ids_csv" \
+    AZ_MOCK_REDIRECT_URIS="$redirect_uris_csv" \
+    bash scripts/create-multitenant-app.sh
+)"
+assert_contains "$reconcile_output" 'Reconciled and verified the existing multitenant app registration.'
+assert_contains "$reconcile_output" "Application (client) ID: $app_id"
+assert_log_contains "ad app show --id $app_id --query id"
+assert_log_contains "ad sp list --filter appId\\ eq\\ \\'$app_id\\'"
+assert_log_contains "rest --method PATCH --url https://graph.microsoft.com/v1.0/applications/$object_id"
+assert_log_excludes 'ad app list --display-name'
+assert_log_excludes 'ad app delete'
+printf 'PASS: create script safely reconciles an exact existing application\n'
+
+: >"$AZ_MOCK_LOG"
+if reconcile_unconfirmed_output="$(
+  env \
+    PATH="$mock_path" \
+    AFTER_PARTY_APP_ID="$app_id" \
+    EXPECTED_TENANT_ID="$tenant_id" \
+    bash scripts/create-multitenant-app.sh 2>&1
+)"; then
+  fail 'create script reconciled without explicit confirmation'
+fi
+assert_contains "$reconcile_unconfirmed_output" 'Set CONFIRM_RECONCILE to the same client ID'
+[[ ! -s "$AZ_MOCK_LOG" ]] || fail 'unconfirmed reconciliation reached Azure CLI'
+printf 'PASS: reconciliation requires the exact client ID as confirmation\n'
+
+: >"$AZ_MOCK_LOG"
+if reconcile_wrong_tenant_output="$(
+  env \
+    PATH="$mock_path" \
+    AFTER_PARTY_APP_ID="$app_id" \
+    EXPECTED_TENANT_ID='33333333-3333-3333-3333-333333333333' \
+    CONFIRM_RECONCILE="$app_id" \
+    bash scripts/create-multitenant-app.sh 2>&1
+)"; then
+  fail 'create script reconciled the application from the wrong tenant'
+fi
+assert_contains "$reconcile_wrong_tenant_output" "Signed into tenant $tenant_id"
+assert_log_excludes 'ad app show'
+assert_log_excludes 'rest --method PATCH'
+printf 'PASS: reconciliation stops before lookup or mutation in the wrong tenant\n'
+
+: >"$AZ_MOCK_LOG"
+if reconcile_wrong_app_output="$(
+  env \
+    PATH="$mock_path" \
+    AFTER_PARTY_APP_ID="$app_id" \
+    EXPECTED_TENANT_ID="$tenant_id" \
+    CONFIRM_RECONCILE="$app_id" \
+    AZ_MOCK_APP_ID='55555555-5555-5555-5555-555555555555' \
+    bash scripts/create-multitenant-app.sh 2>&1
+)"; then
+  fail 'create script reconciled an application that returned a different client ID'
+fi
+assert_contains "$reconcile_wrong_app_output" 'did not resolve to the expected'
+assert_log_excludes 'ad sp list'
+assert_log_excludes 'rest --method PATCH'
+printf 'PASS: reconciliation refuses a mismatched application identity\n'
+
+: >"$AZ_MOCK_LOG"
+if reconcile_service_principal_output="$(
+  env \
+    PATH="$mock_path" \
+    AFTER_PARTY_APP_ID="$app_id" \
+    EXPECTED_TENANT_ID="$tenant_id" \
+    CONFIRM_RECONCILE="$app_id" \
+    AZ_MOCK_SP_COUNT=1 \
+    bash scripts/create-multitenant-app.sh 2>&1
+)"; then
+  fail 'create script reconciled an application with an existing service principal'
+fi
+assert_contains "$reconcile_service_principal_output" 'already has a tenant service principal'
+assert_log_excludes 'rest --method PATCH'
+assert_log_excludes 'ad app delete'
+printf 'PASS: reconciliation refuses an existing student service principal\n'
 
 : >"$AZ_MOCK_LOG"
 delete_output="$(

@@ -88,6 +88,22 @@ test('the public app configuration contains only the reviewed SPA contract', asy
     await readFile(path.join(output, 'installation.js'), 'utf8'),
     /createTenantInstallation/,
   );
+  assert.match(
+    await readFile(path.join(output, 'experiments.js'), 'utf8'),
+    /mountExperimentCard/,
+  );
+});
+
+test('the static page provides the shared experiment-card presentation', async () => {
+  const index = await readFile(new URL('../site/index.html', import.meta.url), 'utf8');
+  const styles = await readFile(new URL('../site/styles.css', import.meta.url), 'utf8');
+
+  assert.match(index, /id="experiments-heading"/);
+  assert.match(index, /id="experiment-cards"/);
+  assert.match(index, /what it can read or change/i);
+  assert.match(styles, /\.experiment-card/);
+  assert.match(styles, /\.experiment-result/);
+  assert.match(styles, /\[data-effect="write"\]/);
 });
 
 test('the sign-in copy distinguishes identity consent from lab permissions', async () => {

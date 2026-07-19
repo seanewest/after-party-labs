@@ -209,6 +209,28 @@ export function runCli(argv = process.argv.slice(2)): number {
         printMessage(message, json);
         return 0;
       }
+      case "turn-interrupted": {
+        const disposition = requiredOption(parsed, "disposition");
+        if (disposition !== "retry-safe" && disposition !== "escalate") {
+          throw new QueueError(
+            'Option --disposition must be either "retry-safe" or "escalate".',
+          );
+        }
+        const result = queue.reportTurnInterruption({
+          messageId: requiredPositional(positionals, 0, "message ID"),
+          reportedBy: requiredOption(parsed, "reported-by"),
+          reason: requiredOption(parsed, "error"),
+          workStarted: workStartedOption(parsed),
+          retrySafe: disposition === "retry-safe",
+          dedupeKey: requiredOption(parsed, "dedupe-key"),
+          retryAfterMs: integerOption(parsed, "retry-after-ms"),
+          details: option(parsed, "details")
+            ? parseJson(requiredOption(parsed, "details"), "interruption details")
+            : undefined,
+        });
+        print(result, json);
+        return 0;
+      }
       case "fail": {
         const message = queue.fail(
           requiredPositional(positionals, 0, "message ID"),
@@ -301,6 +323,22 @@ function integerOption(parsed: ParsedArguments, name: string): number | undefine
     throw new QueueError(`Option --${name} must be an integer.`);
   }
   return parsedValue;
+}
+
+function workStartedOption(parsed: ParsedArguments): boolean | null {
+  const value = requiredOption(parsed, "work-started").toLowerCase();
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  if (value === "unknown") {
+    return null;
+  }
+  throw new QueueError(
+    'Option --work-started must be "true", "false", or "unknown".',
+  );
 }
 
 function requiredPositional(values: string[], index: number, label: string): string {
@@ -409,6 +447,9 @@ Commands:
   receipt MESSAGE_ID --recipient NAME [--details JSON]
   acknowledge MESSAGE_ID
   complete MESSAGE_ID
+  turn-interrupted MESSAGE_ID --reported-by NAME --disposition retry-safe|escalate
+    --work-started true|false|unknown --error TEXT --dedupe-key KEY
+    [--retry-after-ms NUMBER] [--details JSON]
   fail MESSAGE_ID --consumer ID --error TEXT
   retry MESSAGE_ID
   cancel MESSAGE_ID

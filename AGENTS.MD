@@ -42,7 +42,9 @@ If an agent knows its assigned name, it should prefix every GitHub issue comment
 
 When told to `check the board`, follow the dispatch loop in [docs/development.md](docs/development.md#checking-the-board) until no actionable owned Task, Story reconciliation, review, or Ready Task remains. Stories are never claimed for implementation. Whenever a Task changes state, reconcile its parent Story before continuing.
 
-A Story in Review may need proposal review before implementation or triage after failed human acceptance. Claim that review with a signed comment, leave the Story's Agent blank, and record the result on the Story.
+A Story in Review may need proposal review before implementation or triage after failed human acceptance. Claim that review with a signed comment, set the Story's Current Agent while the review is active, leave Original Agent blank, and clear Current Agent when handing off the result.
+
+For Tasks, Original Agent is the sticky creator of the first implementation pull request. Current Agent is the mutable owner of the next action across implementation, review, rework, and re-review. Clear Current Agent for unclaimed review, human waits, and Done; never overwrite Original Agent during a handoff.
 
 Only work represented by an issue card on the project board is eligible for this dispatch loop. Ignore issues without a card and pull requests without a linked board issue unless the human explicitly asks you to act on them.
 

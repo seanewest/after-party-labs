@@ -131,6 +131,60 @@ test("the CLI reports worker unavailability and durable escalation state", async
   }
 });
 
+test("the CLI reports a safe post-receipt interruption for delayed retry", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "after-party-cli-interruption-"));
+  const databasePath = join(directory, "queue.sqlite");
+  try {
+    const created = await runCli(
+      databasePath,
+      "enqueue",
+      "--from",
+      "morpheus",
+      "--to",
+      "cornholio",
+      "--message",
+      "Resume Task #36",
+      "--json",
+    );
+    const message = JSON.parse(created.stdout) as { id: string };
+    await runCli(databasePath, "claim", "--consumer", "runner-a");
+    await runCli(databasePath, "delivering", message.id, "--consumer", "runner-a");
+    await runCli(databasePath, "receipt", message.id, "--recipient", "cornholio");
+    await runCli(databasePath, "ack", message.id);
+
+    const result = await runCli(
+      databasePath,
+      "turn-interrupted",
+      message.id,
+      "--reported-by",
+      "cornholio",
+      "--disposition",
+      "retry-safe",
+      "--work-started",
+      "false",
+      "--error",
+      "Selected model is at capacity",
+      "--dedupe-key",
+      "turn:cli:capacity",
+      "--retry-after-ms",
+      "30000",
+      "--details",
+      '{"event":"turn.failed"}',
+      "--json",
+    );
+    const interruption = JSON.parse(result.stdout) as {
+      message: { id: string; state: string };
+      interruption: { disposition: string; retryAvailableAt: number };
+    };
+    assert.equal(interruption.message.id, message.id);
+    assert.equal(interruption.message.state, "queued");
+    assert.equal(interruption.interruption.disposition, "retry_safe");
+    assert.ok(interruption.interruption.retryAvailableAt > Date.now());
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("the CLI rejects invalid worker identities", async () => {
   const directory = mkdtempSync(join(tmpdir(), "after-party-cli-invalid-"));
   const databasePath = join(directory, "queue.sqlite");

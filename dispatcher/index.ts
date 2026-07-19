@@ -1,5 +1,32 @@
 export { defaultDispatcherDatabasePath } from "./paths.ts";
 export {
+  extractSignedAgent,
+  feedbackSourceKey,
+  GITHUB_FEEDBACK_KINDS,
+  GitHubFeedbackError,
+  GitHubFeedbackPoller,
+  GitHubFeedbackStore,
+  type GitHubFeedbackCheckpoint,
+  type GitHubFeedbackEvent,
+  type GitHubFeedbackKind,
+  type GitHubFeedbackOutcome,
+  type GitHubFeedbackPage,
+  type GitHubFeedbackPollerOptions,
+  type GitHubFeedbackSource,
+  type GitHubPollResult,
+  type PullRequestRoute,
+  type RecordBatchResult,
+  type StoredGitHubFeedbackEvent,
+} from "./github-feedback.ts";
+export {
+  GhCliGitHubSource,
+  isTransientGitHubError,
+  runGh,
+  type Delay,
+  type GhCliGitHubSourceOptions,
+  type GhCommandRunner,
+} from "./github-source.ts";
+export {
   DispatcherQueue,
   ESCALATION_KINDS,
   ESCALATION_STATUSES,
@@ -8,6 +35,7 @@ export {
   MESSAGE_STATES,
   MessageNotFoundError,
   QueueError,
+  TURN_INTERRUPTION_DISPOSITIONS,
   WORKER_AVAILABILITIES,
   type ClaimOptions,
   type CreateEscalationInput,
@@ -24,7 +52,11 @@ export {
   type QueueInspection,
   type QueueMessage,
   type QueueOptions,
+  type ReportTurnInterruptionInput,
   type SetWorkerAvailabilityOptions,
+  type TurnInterruption,
+  type TurnInterruptionDisposition,
+  type TurnInterruptionResult,
   type WorkerAvailability,
   type WorkerRecord,
 } from "./queue.ts";

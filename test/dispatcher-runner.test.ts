@@ -14,6 +14,7 @@ import {
   type CommandExecutor,
   type WorkerTerminal,
 } from "../dispatcher/tmux-runner.ts";
+import { StructuredTurnOutcomeMonitor } from "../dispatcher/turn-outcome.ts";
 import { DeliveryCoordinator } from "../dispatcher/worker-runner.ts";
 
 const SESSION_A = "11111111-1111-4111-8111-111111111111";
@@ -98,7 +99,7 @@ test("handoff envelopes carry one stable, machine-readable message ID", () => {
   }
 });
 
-test("lifecycle hooks register identity, separate receipt from completion, and suppress retries", () => {
+test("lifecycle hooks permit only a structured retry and leave completion to turn events", () => {
   const state = fixture();
   try {
     state.sessions.configureWorker("beavis", state.worktree);
@@ -149,7 +150,9 @@ test("lifecycle hooks register identity, separate receipt from completion, and s
     });
     assert.deepEqual(duplicate, {
       decision: "block",
-      reason: `Dispatcher message ${enqueued.id} was already receipted; duplicate processing is suppressed.`,
+      reason:
+        `Dispatcher message ${enqueued.id} already has a receipt and no structured ` +
+        "retry-safe interruption authorizes this attempt.",
     });
 
     state.tick();
@@ -161,8 +164,51 @@ test("lifecycle hooks register identity, separate receipt from completion, and s
       stop_hook_active: false,
       last_assistant_message: "Done",
     });
-    assert.equal(state.queue.getMessage(enqueued.id)?.state, "completed");
+    assert.equal(state.queue.getMessage(enqueued.id)?.state, "receipted");
     assert.equal(state.queue.getWorker("beavis").availability, "idle");
+
+    const interrupted = new StructuredTurnOutcomeMonitor(state.queue, {
+      messageId: enqueued.id,
+      attemptNumber: 1,
+      reportedBy: "beavis",
+      streamId: "stream-turn-1",
+      retryAfterMs: 0,
+    }).consume({
+      type: "turn.failed",
+      turn_id: "turn-1",
+      error: { code: "usageLimitExceeded" },
+    });
+    assert.equal(interrupted?.outcome, "retry_safe");
+    assert.equal(state.queue.getMessage(enqueued.id)?.state, "queued");
+    assert.ok(state.queue.inspect(enqueued.id).receipt);
+
+    const retry = state.queue.claimNext({
+      consumer: "runner-retry",
+      leaseMs: 500,
+      workerAvailabilities: ["idle"],
+    });
+    assert.equal(retry?.attemptCount, 2);
+    state.queue.beginDelivery(enqueued.id, "runner-retry");
+    const retryPrompt = formatHandoff(state.queue.inspect(enqueued.id).message);
+    state.tick();
+    const acceptedRetry = lifecycle.handle({
+      hook_event_name: "UserPromptSubmit",
+      session_id: SESSION_A,
+      cwd: state.worktree,
+      turn_id: "turn-2",
+      prompt: retryPrompt,
+    });
+    assert.match(JSON.stringify(acceptedRetry), /attempt 2/);
+    assert.equal(state.queue.getMessage(enqueued.id)?.state, "receipted");
+
+    const completed = new StructuredTurnOutcomeMonitor(state.queue, {
+      messageId: enqueued.id,
+      attemptNumber: 2,
+      reportedBy: "beavis",
+      streamId: "stream-turn-2",
+    }).consume({ type: "turn.completed", turn_id: "turn-2" });
+    assert.equal(completed?.outcome, "completed");
+    assert.equal(state.queue.getMessage(enqueued.id)?.state, "completed");
   } finally {
     state.cleanup();
   }
@@ -256,13 +302,31 @@ test("sleeping workers resume their saved session and receipt delivery before co
       state.queue,
       state.sessions,
       terminal,
-      { consumer: "runner", leaseMs: 500, pollMs: 1 },
+      {
+        consumer: "runner",
+        leaseMs: 500,
+        pollMs: 1,
+        turnOutcomeSource: {
+          async waitForOutcome(accepted) {
+            const outcome = new StructuredTurnOutcomeMonitor(state.queue, {
+              messageId: accepted.id,
+              attemptNumber: accepted.attemptCount,
+              reportedBy: accepted.recipient,
+              streamId: "delivery-stream",
+            }).consume({ type: "turn.completed", turn_id: "delivery-turn" });
+            if (!outcome) {
+              throw new Error("Expected a terminal structured outcome.");
+            }
+            return outcome;
+          },
+        },
+      },
     );
     const result = await coordinator.deliverOnce();
-    assert.equal(result.outcome, "receipted");
+    assert.equal(result.outcome, "completed");
     assert.equal(terminal.starts[0]?.sessionId, SESSION_B);
     assert.equal(terminal.injections.length, 1);
-    assert.equal(state.queue.getMessage(message.id)?.state, "acknowledged");
+    assert.equal(state.queue.getMessage(message.id)?.state, "completed");
 
     state.tick();
     lifecycle.handle({
@@ -273,6 +337,110 @@ test("sleeping workers resume their saved session and receipt delivery before co
       stop_hook_active: false,
     });
     assert.equal(state.queue.getMessage(message.id)?.state, "completed");
+  } finally {
+    state.cleanup();
+  }
+});
+
+test("structured outcomes retry only pre-work transient failures and escalate after work", () => {
+  const state = fixture();
+  try {
+    state.queue.setWorkerAvailability("daria", "idle");
+    const ambiguous = state.queue.enqueue({
+      sender: "morpheus",
+      recipient: "daria",
+      payload: { text: "Do not replay completed work." },
+    });
+    state.queue.claimNext({ consumer: "runner", leaseMs: 500 });
+    state.queue.beginDelivery(ambiguous.id, "runner");
+    state.queue.recordReceipt(ambiguous.id, "daria", { turnId: "turn-work" });
+    state.queue.acknowledge(ambiguous.id);
+
+    const worked = new StructuredTurnOutcomeMonitor(state.queue, {
+      messageId: ambiguous.id,
+      attemptNumber: 1,
+      reportedBy: "daria",
+      streamId: "stream-with-work",
+    });
+    assert.equal(
+      worked.consume({
+        type: "item.started",
+        item: { id: "reasoning-1", type: "reasoning" },
+      }),
+      null,
+    );
+    const escalated = worked.consume({
+      type: "error",
+      turn_id: "turn-work",
+      error: { code: "serverOverloaded" },
+    });
+    assert.equal(escalated?.outcome, "escalated");
+    assert.equal(state.queue.getMessage(ambiguous.id)?.state, "failed");
+    assert.equal(state.queue.inspect(ambiguous.id).interruptions[0]?.workStarted, true);
+    assert.equal(state.queue.listEscalations({ kind: "delivery_failure" }).length, 1);
+
+    const retryable = state.queue.enqueue({
+      sender: "morpheus",
+      recipient: "daria",
+      payload: { text: "Retry only if the full turn proves no work began." },
+    });
+    state.queue.claimNext({ consumer: "runner", leaseMs: 500 });
+    state.queue.beginDelivery(retryable.id, "runner");
+    state.queue.recordReceipt(retryable.id, "daria", { turnId: "turn-pre-work" });
+    const retrySafe = new StructuredTurnOutcomeMonitor(state.queue, {
+      messageId: retryable.id,
+      attemptNumber: 1,
+      reportedBy: "daria",
+      streamId: "app-server-turn",
+      retryAfterMs: 0,
+    }).consume({
+      method: "turn/completed",
+      params: {
+        turn: {
+          id: "turn-pre-work",
+          status: "failed",
+          itemsView: "full",
+          items: [{ id: "input-1", type: "userMessage", content: [] }],
+          error: { codexErrorInfo: "serverOverloaded" },
+        },
+      },
+    });
+    assert.equal(retrySafe?.outcome, "retry_safe");
+    assert.equal(state.queue.getMessage(retryable.id)?.state, "queued");
+    assert.equal(
+      state.queue.inspect(retryable.id).interruptions[0]?.workStarted,
+      false,
+    );
+
+    state.queue.setWorkerAvailability("beavis", "idle");
+    const unclassified = state.queue.enqueue({
+      sender: "morpheus",
+      recipient: "beavis",
+      payload: { text: "Do not infer safety from partial event history." },
+    });
+    state.queue.claimNext({
+      consumer: "runner",
+      leaseMs: 500,
+      recipient: "beavis",
+    });
+    state.queue.beginDelivery(unclassified.id, "runner");
+    state.queue.recordReceipt(unclassified.id, "beavis");
+    const unknown = new StructuredTurnOutcomeMonitor(state.queue, {
+      messageId: unclassified.id,
+      attemptNumber: 1,
+      reportedBy: "beavis",
+      streamId: "partial-stream",
+      historyComplete: false,
+    }).consume({
+      type: "turn.failed",
+      turn_id: "turn-partial",
+      error: { code: "serverOverloaded" },
+    });
+    assert.equal(unknown?.outcome, "escalated");
+    assert.equal(
+      state.queue.inspect(unclassified.id).interruptions[0]?.workStarted,
+      null,
+    );
   } finally {
     state.cleanup();
   }
@@ -370,6 +538,50 @@ test("the party CLI configures named worktrees without storing them in Git", () 
     );
     assert.equal(listed.status, 0, listed.stderr);
     assert.match(listed.stdout, /beavis: asleep; .*; no saved Codex session/);
+  } finally {
+    state.cleanup();
+  }
+});
+
+test("the party CLI consumes a structured Codex JSONL terminal outcome", () => {
+  const state = fixture();
+  try {
+    state.queue.setWorkerAvailability("beavis", "idle");
+    const message = state.queue.enqueue({
+      sender: "morpheus",
+      recipient: "beavis",
+      payload: { text: "Complete only from the event stream." },
+    });
+    state.queue.claimNext({ consumer: "runner", leaseMs: 500 });
+    state.queue.beginDelivery(message.id, "runner");
+    state.queue.recordReceipt(message.id, "beavis");
+
+    const script = join(process.cwd(), "dispatcher", "party.ts");
+    const outcome = spawnSync(
+      process.execPath,
+      [
+        script,
+        "--database",
+        state.queue.databasePath,
+        "turn-events",
+        message.id,
+        "--reported-by",
+        "beavis",
+        "--attempt",
+        "1",
+        "--stream-id",
+        "cli-stream",
+      ],
+      {
+        encoding: "utf8",
+        input:
+          '{"type":"turn.started"}\n' +
+          '{"type":"turn.completed","turn_id":"turn-cli"}\n',
+      },
+    );
+    assert.equal(outcome.status, 0, outcome.stderr);
+    assert.equal(JSON.parse(outcome.stdout).outcome, "completed");
+    assert.equal(state.queue.getMessage(message.id)?.state, "completed");
   } finally {
     state.cleanup();
   }

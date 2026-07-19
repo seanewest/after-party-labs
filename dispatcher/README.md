@@ -33,8 +33,21 @@ trust.
 The trusted `SessionStart`, `UserPromptSubmit`, and `Stop` events register the named session and set
 idle/busy state without scraping terminal output. A dispatcher prompt includes an
 `AFTER_PARTY_HANDOFF_V1` envelope. `UserPromptSubmit` validates the complete envelope against the
-queue, records its durable receipt before processing, and blocks a retry whose message ID already
-has a receipt. `Stop` records final completion separately.
+queue and records its durable receipt before processing. A retained receipt blocks duplicates but
+does not block a new attempt explicitly authorized by a `retry_safe` interruption. `Stop` only
+records lifecycle state; it never infers successful model work.
+
+Structured Codex JSONL events are consumed by `StructuredTurnOutcomeMonitor`, or from stdin with:
+
+    npm run party -- turn-events MESSAGE_ID --reported-by beavis \
+      --attempt 1 --stream-id SESSION_OR_STREAM_ID < codex-events.jsonl
+
+The adapter understands `codex exec --json` events such as `turn.completed`, `turn.failed`,
+`item.*`, and `error`, plus app-server `item/*`, `error`, and `turn/completed` notifications. Only a
+structured completion completes the queue message. A transient error may retry only when the event
+history proves no model output or tool activity began; partial, post-work, and unclassified
+failures take the durable escalation path. The tmux adapter never scrapes its pane or treats a
+`Stop` hook as a provider outcome.
 
 ## Delivery contract
 

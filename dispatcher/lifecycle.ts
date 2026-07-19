@@ -2,7 +2,7 @@ import { formatHandoff, parseHandoff } from "./handoff.ts";
 import { DispatcherQueue, QueueError } from "./queue.ts";
 import { WorkerSessionError, WorkerSessionStore } from "./session-store.ts";
 
-export const LIFECYCLE_HOOK_REVISION = "1";
+export const LIFECYCLE_HOOK_REVISION = "2";
 
 interface CommonHookInput {
   session_id: string;
@@ -134,10 +134,21 @@ export class LifecycleHandler {
       };
     }
 
-    if (this.queue.inspect(messageId).receipt) {
+    const inspection = this.queue.inspect(messageId);
+    const existingReceipt = inspection.receipt;
+    const latestInterruption = inspection.interruptions.at(-1);
+    const authorizedSafeRetry = Boolean(
+      existingReceipt &&
+        message.state === "delivering" &&
+        latestInterruption?.disposition === "retry_safe" &&
+        latestInterruption.interruptedAttemptNumber === message.attemptCount - 1,
+    );
+    if (existingReceipt && !authorizedSafeRetry) {
       return {
         decision: "block",
-        reason: `Dispatcher message ${messageId} was already receipted; duplicate processing is suppressed.`,
+        reason:
+          `Dispatcher message ${messageId} already has a receipt and no structured ` +
+          "retry-safe interruption authorizes this attempt.",
       };
     }
 
@@ -159,7 +170,8 @@ export class LifecycleHandler {
       hookSpecificOutput: {
         hookEventName: "UserPromptSubmit",
         additionalContext:
-          `Dispatcher message ${messageId} has a durable recipient receipt. ` +
+          `Dispatcher message ${messageId} attempt ${message.attemptCount} has a durable ` +
+          "recipient receipt. " +
           "The receipt confirms acceptance, not final completion.",
       },
     };
@@ -174,16 +186,6 @@ export class LifecycleHandler {
       input.turn_id,
       observedAt,
     );
-    if (finished.messageId) {
-      const message = this.queue.getMessage(finished.messageId);
-      if (message?.state === "receipted") {
-        this.queue.acknowledge(finished.messageId);
-      }
-      const acknowledged = this.queue.getMessage(finished.messageId);
-      if (acknowledged?.state === "acknowledged") {
-        this.queue.complete(finished.messageId);
-      }
-    }
     if (finished.matched) {
       this.queue.setWorkerAvailability(worker.name, "idle", { observedAt });
     }

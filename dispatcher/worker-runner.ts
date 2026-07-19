@@ -6,6 +6,7 @@ import { DispatcherQueue, type QueueMessage } from "./queue.ts";
 import type { AgentName } from "./registry.ts";
 import { WorkerSessionStore } from "./session-store.ts";
 import type { WorkerTerminal } from "./tmux-runner.ts";
+import type { TurnOutcomeSource } from "./turn-outcome.ts";
 
 export interface DeliveryCoordinatorOptions {
   consumer?: string;
@@ -14,10 +15,17 @@ export interface DeliveryCoordinatorOptions {
   receiptTimeoutMs?: number;
   pollMs?: number;
   sleep?: (milliseconds: number) => Promise<void>;
+  turnOutcomeSource?: TurnOutcomeSource;
 }
 
 export interface DeliveryResult {
-  outcome: "empty" | "deferred" | "receipted" | "failed";
+  outcome:
+    | "empty"
+    | "deferred"
+    | "receipted"
+    | "completed"
+    | "retry_safe"
+    | "failed";
   message: QueueMessage | null;
   error?: string;
 }
@@ -32,6 +40,7 @@ export class DeliveryCoordinator {
   #receiptTimeoutMs: number;
   #pollMs: number;
   #sleep: (milliseconds: number) => Promise<void>;
+  #turnOutcomeSource: TurnOutcomeSource | null;
 
   constructor(
     queue: DispatcherQueue,
@@ -48,6 +57,7 @@ export class DeliveryCoordinator {
     this.#receiptTimeoutMs = options.receiptTimeoutMs ?? 15_000;
     this.#pollMs = options.pollMs ?? 100;
     this.#sleep = options.sleep ?? delay;
+    this.#turnOutcomeSource = options.turnOutcomeSource ?? null;
     requirePositiveInteger(this.#leaseMs, "lease duration");
     requireNonNegativeInteger(this.#startupTimeoutMs, "startup timeout");
     requireNonNegativeInteger(this.#receiptTimeoutMs, "receipt timeout");
@@ -105,6 +115,20 @@ export class DeliveryCoordinator {
       if (current?.state === "receipted") {
         this.queue.acknowledge(message.id);
       }
+      if (this.#turnOutcomeSource) {
+        const accepted = this.queue.getMessage(message.id);
+        if (!accepted) {
+          throw new Error(`Message ${message.id} disappeared after receipt.`);
+        }
+        const outcome = await this.#turnOutcomeSource.waitForOutcome(accepted);
+        if (outcome.outcome === "completed") {
+          return { outcome: "completed", message: outcome.message };
+        }
+        if (outcome.outcome === "retry_safe") {
+          return { outcome: "retry_safe", message: outcome.result.message };
+        }
+        return { outcome: "failed", message: outcome.result.message };
+      }
       return { outcome: "receipted", message: this.queue.getMessage(message.id) };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -158,12 +182,28 @@ export class DeliveryCoordinator {
   }
 
   #fail(message: QueueMessage, reason: string): DeliveryResult {
-    let current = this.queue.getMessage(message.id);
-    if (current && ["receipted", "acknowledged", "completed"].includes(current.state)) {
-      if (current.state === "receipted") {
-        current = this.queue.acknowledge(message.id);
-      }
+    const current = this.queue.getMessage(message.id);
+    if (current?.state === "completed") {
       return { outcome: "receipted", message: current };
+    }
+    if (current?.state === "receipted" || current?.state === "acknowledged") {
+      const interruption = this.queue.reportTurnInterruption({
+        messageId: message.id,
+        reportedBy: message.recipient,
+        reason,
+        workStarted: null,
+        retrySafe: false,
+        dedupeKey: `runner-unclassified:${message.id}:${message.attemptCount}`,
+        details: {
+          source: "delivery_coordinator",
+          attempt: message.attemptCount,
+        },
+      });
+      return {
+        outcome: "failed",
+        message: interruption.message,
+        error: reason,
+      };
     }
     if (
       current &&

@@ -105,3 +105,10 @@ export {
   type DeliveryCoordinatorOptions,
   type DeliveryResult,
 } from "./worker-runner.ts";
+export {
+  parseJsonLines,
+  StructuredTurnOutcomeMonitor,
+  type StructuredTurnContext,
+  type StructuredTurnResult,
+  type TurnOutcomeSource,
+} from "./turn-outcome.ts";

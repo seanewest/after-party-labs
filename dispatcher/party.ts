@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import process from "node:process";
+import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 import { defaultDispatcherDatabasePath } from "./paths.ts";
@@ -8,6 +9,7 @@ import { DispatcherQueue } from "./queue.ts";
 import { parseAgentName } from "./registry.ts";
 import { WorkerSessionStore } from "./session-store.ts";
 import { TmuxWorkerTerminal } from "./tmux-runner.ts";
+import { parseJsonLines, StructuredTurnOutcomeMonitor } from "./turn-outcome.ts";
 import { DeliveryCoordinator } from "./worker-runner.ts";
 
 interface ParsedArguments {
@@ -62,6 +64,26 @@ export async function runParty(argv = process.argv.slice(2)): Promise<number> {
         process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
         return result.outcome === "failed" ? 1 : 0;
       }
+      case "turn-events": {
+        const messageId = requiredPositional(positionals, 0, "message ID");
+        const monitor = new StructuredTurnOutcomeMonitor(queue, {
+          messageId,
+          reportedBy: requiredOption(parsed, "reported-by"),
+          attemptNumber: requiredIntegerOption(parsed, "attempt"),
+          streamId: requiredOption(parsed, "stream-id"),
+          historyComplete: !booleanOption(parsed, "history-incomplete"),
+          retryAfterMs: integerOption(parsed, "retry-after-ms"),
+        });
+        let result = null;
+        for (const event of parseJsonLines(readFileSync(0, "utf8"))) {
+          result = monitor.consume(event) ?? result;
+        }
+        if (!result) {
+          throw new Error("The Codex event stream ended without a terminal turn outcome.");
+        }
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+        return result.outcome === "escalated" ? 2 : 0;
+      }
       case "run": {
         const coordinator = coordinatorFor(parsed, queue, sessions, terminal);
         const interval = integerOption(parsed, "interval-ms") ?? 1_000;
@@ -111,7 +133,7 @@ function parseArguments(argv: string[]): ParsedArguments {
       continue;
     }
     const name = argument.slice(2);
-    if (name === "once") {
+    if (name === "once" || name === "history-incomplete") {
       options.set(name, true);
       continue;
     }
@@ -146,6 +168,22 @@ function integerOption(parsed: ParsedArguments, name: string): number | undefine
   return number;
 }
 
+function requiredOption(parsed: ParsedArguments, name: string): string {
+  const value = option(parsed, name);
+  if (!value) {
+    throw new Error(`Missing required option --${name}.`);
+  }
+  return value;
+}
+
+function requiredIntegerOption(parsed: ParsedArguments, name: string): number {
+  const value = integerOption(parsed, name);
+  if (value === undefined) {
+    throw new Error(`Missing required option --${name}.`);
+  }
+  return value;
+}
+
 function requiredPositional(values: string[], index: number, label: string): string {
   const value = values[index];
   if (!value) {
@@ -165,6 +203,8 @@ Commands:
   agents
   agent NAME
   deliver [runner options]
+  turn-events MESSAGE_ID --reported-by NAME --attempt NUMBER --stream-id ID
+    [--retry-after-ms NUMBER] [--history-incomplete] < codex-events.jsonl
   run [--once] [--interval-ms NUMBER] [runner options]
 
 Runner options:

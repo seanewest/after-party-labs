@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -29,6 +37,8 @@ import {
 
 const SESSION_A = "11111111-1111-4111-8111-111111111111";
 const SESSION_B = "22222222-2222-4222-8222-222222222222";
+const LIFECYCLE_COMMAND =
+  '/usr/bin/env node "$(git rev-parse --show-toplevel)/dispatcher/hooks/lifecycle.ts"';
 
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), "after-party-runner-"));
@@ -123,6 +133,29 @@ class FakeWorkerClientLock implements WorkerClientLock {
     };
   }
 }
+
+test("project hooks install only the reviewed named-worker lifecycle commands", () => {
+  const configuration = JSON.parse(
+    readFileSync(join(process.cwd(), ".codex", "hooks.json"), "utf8"),
+  ) as {
+    hooks?: Record<
+      string,
+      Array<{ hooks?: Array<{ type?: string; command?: string }> }>
+    >;
+  };
+
+  assert.deepEqual(Object.keys(configuration.hooks ?? {}).sort(), [
+    "SessionStart",
+    "Stop",
+    "UserPromptSubmit",
+  ]);
+  for (const event of Object.values(configuration.hooks ?? {})) {
+    assert.equal(event.length, 1);
+    assert.equal(event[0]?.hooks?.length, 1);
+    assert.equal(event[0]?.hooks?.[0]?.type, "command");
+    assert.equal(event[0]?.hooks?.[0]?.command, LIFECYCLE_COMMAND);
+  }
+});
 
 test("handoff envelopes carry one stable, machine-readable message ID", () => {
   const state = fixture();
@@ -780,6 +813,32 @@ test("the party CLI configures named worktrees without storing them in Git", () 
     assert.match(listed.stdout, /beavis: asleep; .*; no saved Codex session/);
   } finally {
     state.cleanup();
+  }
+});
+
+test("package bin symlinks execute the party entrypoints", () => {
+  const directory = mkdtempSync(join(tmpdir(), "after-party-bin-"));
+  try {
+    const party = join(directory, "party");
+    const queue = join(directory, "party-dispatcher");
+    const poller = join(directory, "party-github-poller");
+    symlinkSync(join(process.cwd(), "dispatcher", "party.ts"), party);
+    symlinkSync(join(process.cwd(), "dispatcher", "cli.ts"), queue);
+    symlinkSync(join(process.cwd(), "dispatcher", "github-cli.ts"), poller);
+
+    const partyHelp = spawnSync(party, ["help"], { encoding: "utf8" });
+    assert.equal(partyHelp.status, 0, partyHelp.stderr);
+    assert.match(partyHelp.stdout, /Usage: party/);
+
+    const queueHelp = spawnSync(queue, ["help"], { encoding: "utf8" });
+    assert.equal(queueHelp.status, 0, queueHelp.stderr);
+    assert.match(queueHelp.stdout, /Usage: party-dispatcher/);
+
+    const pollerHelp = spawnSync(poller, ["--help"], { encoding: "utf8" });
+    assert.equal(pollerHelp.status, 0, pollerHelp.stderr);
+    assert.match(pollerHelp.stdout, /Usage: party-github-poller/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });
 

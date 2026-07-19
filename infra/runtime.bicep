@@ -17,6 +17,7 @@ var tags = {
 var identityName = '${runtimeName}-identity'
 var environmentName = '${runtimeName}-environment'
 var apiName = '${runtimeName}-api'
+var publishedSpaOrigin = 'https://seanewest.github.io'
 var storageName = take('ap${uniqueString(subscription().id, toLower(resourceGroup().id), runtimeName)}', 24)
 var storageBlobDataContributorRoleId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
@@ -107,6 +108,22 @@ resource api 'Microsoft.App/containerApps@2025-01-01' = {
       ingress: {
         allowInsecure: false
         external: true
+        corsPolicy: {
+          allowCredentials: false
+          allowedOrigins: [
+            publishedSpaOrigin
+          ]
+          allowedMethods: [
+            'POST'
+            'OPTIONS'
+          ]
+          allowedHeaders: [
+            'Authorization'
+            'Content-Type'
+          ]
+          exposeHeaders: []
+          maxAge: 300
+        }
         targetPort: 3000
         traffic: [
           {

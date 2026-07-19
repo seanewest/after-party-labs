@@ -95,6 +95,10 @@ The developer-owned application exposes the admin-consent-only delegated scope
 The SPA asks MSAL for that single runtime token immediately before a call, treats it as opaque, and
 never copies it into a result or application-managed storage.
 
+Container Apps ingress answers browser preflight only for the published SPA origin
+`https://seanewest.github.io`. It allows `POST` and `OPTIONS` with only the `Authorization` and
+`Content-Type` request headers, and it does not allow credential cookies or wildcard origins.
+
 Every request contains exactly one allowlisted operation, a new request ID, and the tenant, runtime
 resource ID, and full commit the SPA believes it is calling. Platform authentication rejects a
 missing or invalid bearer token. The API independently requires:

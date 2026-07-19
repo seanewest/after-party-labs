@@ -344,6 +344,13 @@ test('the Bicep runtime is minimal, passwordless, stateful, and versioned', asyn
   assert.match(runtime, /unauthenticatedClientAction: 'Return401'/);
   assert.match(runtime, /allowedApplications/);
   assert.match(runtime, /AFTER_PARTY_API_SCOPE/);
+  const corsPolicy = runtime.match(/corsPolicy:\s*\{[\s\S]*?\n        \}/)?.[0] || '';
+  assert.match(corsPolicy, /allowCredentials: false/);
+  assert.match(corsPolicy, /allowedOrigins:[\s\S]*publishedSpaOrigin/);
+  assert.match(corsPolicy, /allowedMethods:[\s\S]*'POST'[\s\S]*'OPTIONS'/);
+  assert.match(corsPolicy, /allowedHeaders:[\s\S]*'Authorization'[\s\S]*'Content-Type'/);
+  assert.match(runtime, /publishedSpaOrigin = 'https:\/\/seanewest\.github\.io'/);
+  assert.doesNotMatch(corsPolicy, /['"]\*['"]/);
   assert.doesNotMatch(source, /Microsoft\.App\/jobs/i);
   assert.doesNotMatch(source, /clientSecret|listKeys|accountKey/i);
 });

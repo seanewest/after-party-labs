@@ -65,8 +65,8 @@ function normalizeConfiguration(configuration) {
   }
   return {
     clientId: requireUuid(configuration?.clientId, 'configuration_invalid'),
-    developerTenantId: requireUuid(
-      configuration?.developerTenantId,
+    applicationHomeTenantId: requireUuid(
+      configuration?.applicationHomeTenantId,
       'configuration_invalid',
     ),
     displayName,
@@ -258,7 +258,7 @@ export function createTenantInstallation({
     const servicePrincipal = servicePrincipals.value[0];
     if (
       servicePrincipal.appId?.toLowerCase() !== expected.clientId ||
-      servicePrincipal.appOwnerOrganizationId?.toLowerCase() !== expected.developerTenantId ||
+      servicePrincipal.appOwnerOrganizationId?.toLowerCase() !== expected.applicationHomeTenantId ||
       servicePrincipal.servicePrincipalType !== 'Application' ||
       servicePrincipal.displayName !== expected.displayName ||
       !UUID_PATTERN.test(servicePrincipal.id)

@@ -398,21 +398,60 @@ assert_log_excludes 'rest --method PATCH'
 printf 'PASS: reconciliation refuses a mismatched application identity\n'
 
 : >"$AZ_MOCK_LOG"
-if reconcile_service_principal_output="$(
+reconcile_service_principal_output="$(
+  env \
+    PATH="$mock_path" \
+    AFTER_PARTY_APP_ID="$app_id" \
+    EXPECTED_TENANT_ID="$tenant_id" \
+    CONFIRM_RECONCILE="$app_id" \
+    SPA_REDIRECT_URI="$redirect_uri" \
+    AZ_MOCK_PERMISSION_IDS="$permission_ids_csv" \
+    AZ_MOCK_REDIRECT_URIS="$redirect_uris_csv" \
+    AZ_MOCK_SP_COUNT=1 \
+    AZ_MOCK_SP_OWNER_TENANT_ID="$tenant_id" \
+    bash scripts/create-multitenant-app.sh
+)"
+assert_contains "$reconcile_service_principal_output" 'Reconciled and verified the existing multitenant app registration.'
+assert_contains "$reconcile_service_principal_output" "Tenant-local enterprise application preserved: $service_principal_id"
+assert_contains "$reconcile_service_principal_output" 'No client secret, certificate, or service principal was created or deleted.'
+assert_log_contains "rest --method PATCH --url https://graph.microsoft.com/v1.0/applications/$object_id"
+assert_log_excludes 'ad app delete'
+printf 'PASS: reconciliation preserves the exact tenant-local enterprise application\n'
+
+: >"$AZ_MOCK_LOG"
+if reconcile_mismatched_service_principal_output="$(
   env \
     PATH="$mock_path" \
     AFTER_PARTY_APP_ID="$app_id" \
     EXPECTED_TENANT_ID="$tenant_id" \
     CONFIRM_RECONCILE="$app_id" \
     AZ_MOCK_SP_COUNT=1 \
+    AZ_MOCK_SP_OWNER_TENANT_ID='33333333-3333-3333-3333-333333333333' \
     bash scripts/create-multitenant-app.sh 2>&1
 )"; then
-  fail 'create script reconciled an application with an existing service principal'
+  fail 'create script reconciled an application with a mismatched local service principal'
 fi
-assert_contains "$reconcile_service_principal_output" 'already has a tenant service principal'
+assert_contains "$reconcile_mismatched_service_principal_output" 'does not match the home application object'
 assert_log_excludes 'rest --method PATCH'
 assert_log_excludes 'ad app delete'
-printf 'PASS: reconciliation refuses an existing student service principal\n'
+printf 'PASS: reconciliation refuses a mismatched tenant-local enterprise application\n'
+
+: >"$AZ_MOCK_LOG"
+if reconcile_duplicate_service_principal_output="$(
+  env \
+    PATH="$mock_path" \
+    AFTER_PARTY_APP_ID="$app_id" \
+    EXPECTED_TENANT_ID="$tenant_id" \
+    CONFIRM_RECONCILE="$app_id" \
+    AZ_MOCK_SP_COUNT=2 \
+    bash scripts/create-multitenant-app.sh 2>&1
+)"; then
+  fail 'create script reconciled an application with duplicate local service principals'
+fi
+assert_contains "$reconcile_duplicate_service_principal_output" 'Expected at most one tenant-local enterprise application'
+assert_log_excludes 'rest --method PATCH'
+assert_log_excludes 'ad app delete'
+printf 'PASS: reconciliation refuses duplicate tenant-local enterprise applications\n'
 
 : >"$AZ_MOCK_LOG"
 delete_output="$(
@@ -467,7 +506,7 @@ assert_log_contains "rest --method DELETE --url https://graph.microsoft.com/v1.0
 assert_log_contains "ad sp delete --id $service_principal_id"
 assert_log_contains "ad app list --app-id $app_id --query \[0\].id"
 assert_log_excludes 'ad app delete'
-printf 'PASS: student uninstall removes only the exact enterprise application and preserves the developer registration\n'
+printf 'PASS: student uninstall removes only the exact enterprise application and preserves the home application object\n'
 
 : >"$AZ_MOCK_LOG"
 if student_uninstall_wrong_tenant_output="$(
@@ -584,11 +623,11 @@ if student_uninstall_registration_loss_output="$(
     AZ_MOCK_SP_COUNT=1 \
     bash scripts/uninstall-student-enterprise-app.sh 2>&1
 )"; then
-  fail 'student uninstall reported success after developer registration loss'
+  fail 'student uninstall reported success after home application object loss'
 fi
 assert_contains "$student_uninstall_registration_loss_output" 'developer app registration count changed unexpectedly'
 assert_log_contains "ad sp delete --id $service_principal_id"
 assert_log_excludes 'ad app delete'
-printf 'PASS: student uninstall fails closed if developer-registration preservation cannot be verified\n'
+printf 'PASS: student uninstall fails closed if home-application preservation cannot be verified\n'
 
 printf 'All shell script tests passed.\n'

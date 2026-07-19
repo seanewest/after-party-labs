@@ -60,7 +60,7 @@ A student visits the official GitHub Pages SPA and signs into the multitenant Af
 
 The later installation step sends the signed-in administrator to that tenant's Microsoft admin-consent endpoint for the reviewed delegated permissions. It reuses the same enterprise application and returns through one-time browser state tied to the original account and tenant.
 
-After consent, the SPA checks Microsoft Graph before reporting success. It requires exactly one service principal for the configured After Party client ID, with the expected developer tenant, display name, and `Application` type. It also requires the complete tenant-wide delegated permission grant and rejects app-only grants. Because newly consented objects can take a few seconds to appear in Microsoft Graph, the check retries briefly while otherwise failing closed on a wrong or duplicate object.
+After consent, the SPA checks Microsoft Graph before reporting success. It requires exactly one service principal for the configured After Party client ID, with the expected application home tenant, display name, and `Application` type. It also requires the complete tenant-wide delegated permission grant and rejects app-only grants. Because newly consented objects can take a few seconds to appear in Microsoft Graph, the check retries briefly while otherwise failing closed on a wrong or duplicate object.
 
 The signed-in operator can then use the SPA to:
 
@@ -96,6 +96,21 @@ role-assignment capability. Install and repair use the same incremental, commit-
 deployment. See [Tenant runtime bootstrap](tenant-runtime.md).
 
 ## Identities
+
+Keep the home and student tenant objects distinct even when development uses one tenant for both:
+
+1. The human bootstrap identity creates or reconciles the project-owned application object.
+2. That multitenant application object exists only in its home tenant and defines the shared client
+   ID, redirects, requested permissions, delegated API scope, and runtime app role.
+3. Each student tenant has its own local enterprise application/service principal for that shared
+   application ID. The student tenant issues API tokens through this local object; the runtime does
+   not contact the home tenant.
+4. The student tenant's runtime managed identity executes downstream work. In this intentionally
+   broad pass, GitHub Actions may federate to the same identity and enter the API through the local
+   enterprise application.
+
+In the single development tenant, the application object, its local enterprise application, and
+the runtime managed identity coexist as separate objects with separate object IDs.
 
 ### Multitenant After Party application
 

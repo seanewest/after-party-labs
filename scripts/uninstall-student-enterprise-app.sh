@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Remove only the tenant-local After Party enterprise application and its grants.
-# This never deletes the developer-owned multitenant application registration.
+# This never deletes the project-owned home-tenant multitenant application registration.
 #
 # Non-interactive use:
 #   AFTER_PARTY_APP_ID='9edaa951-658e-4be2-9623-ee906cb604b2' \

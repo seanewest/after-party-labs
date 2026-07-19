@@ -90,8 +90,10 @@ closed with a repair message.
 
 ## Calling the runtime as the signed-in operator
 
-The developer-owned application exposes the admin-consent-only delegated scope
+The project-owned home application exposes the admin-consent-only delegated scope
 `api://<application-client-id>/AfterParty.Operate` and preauthorizes only its own public SPA client.
+In a student tenant, the local enterprise application represents that API. Tokens are issued by the
+student tenant, and the runtime has no operational dependency on the application home tenant.
 The SPA asks MSAL for that single runtime token immediately before a call, treats it as opaque, and
 never copies it into a result or application-managed storage.
 
@@ -134,7 +136,7 @@ tags.
 
 Deleting this runtime must not delete or alter:
 
-- the developer-owned multitenant application registration;
+- the project-owned home-tenant multitenant application registration;
 - the student tenant's After Party enterprise application or consent grants;
 - unrelated Azure resource groups or resources; or
 - Microsoft 365 baseline or scenario data.

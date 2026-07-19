@@ -142,6 +142,78 @@
   created_app_id=''
   target_app_id=''
   target_object_id=''
+  local_service_principal_id=''
+
+  verify_optional_local_service_principal() {
+    local app_id="$1"
+    local expected_tenant_id="$2"
+    local count
+    local actual_app_id
+    local actual_display_name
+    local actual_owner_tenant_id
+    local actual_type
+
+    count="$(
+      az ad sp list \
+        --filter "appId eq '$app_id'" \
+        --query 'length(@)' \
+        --output tsv \
+        --only-show-errors
+    )"
+    if [[ ! "$count" =~ ^[0-9]+$ || "$count" -gt 1 ]]; then
+      echo "Expected at most one tenant-local enterprise application for client ID $app_id; found $count." >&2
+      return 1
+    fi
+    if [[ "$count" == '0' ]]; then
+      local_service_principal_id=''
+      return 0
+    fi
+
+    local_service_principal_id="$(
+      az ad sp list \
+        --filter "appId eq '$app_id'" \
+        --query '[0].id' \
+        --output tsv \
+        --only-show-errors
+    )"
+    actual_app_id="$(
+      az ad sp list \
+        --filter "appId eq '$app_id'" \
+        --query '[0].appId' \
+        --output tsv \
+        --only-show-errors
+    )"
+    actual_owner_tenant_id="$(
+      az ad sp list \
+        --filter "appId eq '$app_id'" \
+        --query '[0].appOwnerOrganizationId' \
+        --output tsv \
+        --only-show-errors
+    )"
+    actual_display_name="$(
+      az ad sp list \
+        --filter "appId eq '$app_id'" \
+        --query '[0].displayName' \
+        --output tsv \
+        --only-show-errors
+    )"
+    actual_type="$(
+      az ad sp list \
+        --filter "appId eq '$app_id'" \
+        --query '[0].servicePrincipalType' \
+        --output tsv \
+        --only-show-errors
+    )"
+    if [[ ! "$local_service_principal_id" =~ $uuid_pattern ||
+          "$actual_app_id" != "$app_id" ||
+          "$actual_owner_tenant_id" != "$expected_tenant_id" ||
+          "$actual_display_name" != "$APP_DISPLAY_NAME" ||
+          "$actual_type" != 'Application' ]]; then
+      echo 'The tenant-local enterprise application does not match the home application object.' >&2
+      return 1
+    fi
+  }
+
   cleanup_on_error() {
     status=$?
     trap - EXIT
@@ -209,16 +281,7 @@
       exit 1
     fi
 
-    existing_service_principal_count="$(
-      az ad sp list \
-        --filter "appId eq '$AFTER_PARTY_APP_ID'" \
-        --query 'length(@)' \
-        --output tsv \
-        --only-show-errors
-    )"
-    if [[ ! "$existing_service_principal_count" =~ ^[0-9]+$ ||
-          "$existing_service_principal_count" != '0' ]]; then
-      echo 'The existing application already has a tenant service principal; refusing developer-app reconciliation.' >&2
+    if ! verify_optional_local_service_principal "$AFTER_PARTY_APP_ID" "$tenant_id"; then
       echo 'No changes were made.' >&2
       exit 1
     fi
@@ -334,15 +397,20 @@
     exit 1
   fi
 
-  service_principal_count="$(
-    az ad sp list \
-      --filter "appId eq '$target_app_id'" \
-      --query 'length(@)' \
-      --output tsv \
-      --only-show-errors
-  )"
-  if [[ ! "$service_principal_count" =~ ^[0-9]+$ || "$service_principal_count" != '0' ]]; then
-    echo 'The app registration unexpectedly created a service principal; refusing to keep a partial student installation.' >&2
+  if [[ "$operation" == 'create' ]]; then
+    service_principal_count="$(
+      az ad sp list \
+        --filter "appId eq '$target_app_id'" \
+        --query 'length(@)' \
+        --output tsv \
+        --only-show-errors
+    )"
+    if [[ ! "$service_principal_count" =~ ^[0-9]+$ || "$service_principal_count" != '0' ]]; then
+      echo 'The app registration unexpectedly created a service principal; refusing to keep a partial student installation.' >&2
+      exit 1
+    fi
+  elif ! verify_optional_local_service_principal "$target_app_id" "$tenant_id"; then
+    echo 'The home application was changed, but its tenant-local enterprise application no longer matches. Reconcile the tenant installation before continuing.' >&2
     exit 1
   fi
 
@@ -364,6 +432,11 @@
   printf '  %s\n' "${microsoft_graph_permission_names[@]}"
   printf 'Configured delegated Azure management permission:\n'
   printf '  Azure Service Management / user_impersonation\n'
-  printf 'No client secret, certificate, or service principal was created.\n'
+  if [[ -n "$local_service_principal_id" ]]; then
+    printf 'Tenant-local enterprise application preserved: %s\n' "$local_service_principal_id"
+    printf 'No client secret, certificate, or service principal was created or deleted.\n'
+  else
+    printf 'No client secret, certificate, or service principal was created.\n'
+  fi
   printf 'Save the application and tenant IDs for the delete script.\n'
 )

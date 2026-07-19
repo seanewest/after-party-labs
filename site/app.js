@@ -221,7 +221,7 @@ export async function startSignInPage() {
     installation = createTenantInstallation({
       configuration: {
         clientId: configuration.clientId,
-        developerTenantId: appConfiguration.developerTenantId,
+        applicationHomeTenantId: appConfiguration.applicationHomeTenantId,
         displayName: appConfiguration.applicationDisplayName,
         redirectUri: configuration.redirectUri,
         scopes: appConfiguration.microsoftGraphDelegatedScopes,

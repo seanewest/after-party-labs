@@ -1,12 +1,13 @@
 # Multitenant application
 
 After Party uses a Microsoft Entra multitenant application as its shared sign-in and
-installation entry point. This is the developer-owned application registration. A student's
+installation entry point. Its application object is the project-owned, home-tenant application
+registration. A student's
 first identity consent may create the corresponding enterprise application in the student's
 tenant. A later installation consent adds the reviewed lab-management permissions to that same
 enterprise application.
 
-The setup below creates only the developer registration. It does not create a client secret,
+The setup below creates only the home-tenant application object. It does not create a client secret,
 certificate, service principal, or permission grant. The downloaded scripts are pinned to
 reviewed commits so their contents do not change when the repository branch moves.
 
@@ -30,9 +31,9 @@ The script creates and verifies the registration, then prints its Application (c
 home tenant ID. Save both values. It also configures the production and local SPA redirect URIs
 and the delegated Microsoft Graph permissions listed below.
 
-## Reconcile the existing developer application
+## Reconcile the existing home-tenant application
 
-Reconciliation changes broad permission settings in the live developer tenant, so run it only
+Reconciliation changes broad permission settings on the live home-tenant application object, so run it only
 after that live change has been explicitly authorized. Review the same pinned script, confirm the
 signed-in tenant, then paste this exact-ID command into Cloud Shell:
 
@@ -44,9 +45,10 @@ bash <(curl -fsSL 'https://raw.githubusercontent.com/seanewest/after-party-labs/
 ```
 
 The script refuses to reconcile by display name. Before changing anything, it verifies the home
-tenant, exact client ID, application object, display name, and absence of a tenant service
-principal. It then applies and verifies the same redirects and permissions used for new
-registrations, and confirms again that no student enterprise application exists.
+tenant, exact client ID, application object, and display name. The same tenant may also contain the
+local enterprise application derived from this registration; when it does, the script verifies
+that exact service principal and preserves it. A missing local service principal is also valid.
+Mismatched or duplicate objects fail closed.
 
 ## Permission boundary
 
@@ -55,7 +57,7 @@ only for an isolated lab tenant controlled by the student or developer. They are
 permissions: work is performed in the context of a signed-in user and remains limited by that
 user's access. They are not app-only permissions for unattended runtime jobs.
 
-Adding a permission to the developer registration does not grant it in a student tenant. Basic
+Adding a permission to the home-tenant application object does not grant it in a student tenant. Basic
 identity consent during sign-in may create the tenant's enterprise application, but it does not
 grant the broad permissions below. The student installation flow must show that requested access,
 obtain the appropriate consent, and verify the resulting grants.
@@ -107,12 +109,17 @@ URI. A client ID identifies the application; it is not a credential.
 The student installation does not create another app registration. A tenant administrator signs
 in to the SPA, reviews the permission list, and approves it through Microsoft's tenant-specific
 admin-consent page. Microsoft creates or updates the local **enterprise application** (service
-principal) derived from the developer registration.
+principal) derived from the home-tenant application object.
+
+The student tenant issues tokens for this local enterprise application. The tenant runtime uses the
+shared application ID to identify that local object, but it does not contact or authenticate to the
+application's home tenant. Downstream runtime work uses the separate managed identity installed in
+the student tenant.
 
 The SPA reports the tenant as connected only after Microsoft Graph confirms:
 
 - exactly one enterprise application has the configured client ID, `After Party` name,
-  `Application` type, and expected developer tenant;
+  `Application` type, and expected application home tenant;
 - its tenant-wide delegated grant contains every reviewed permission; and
 - it has no app-only role assignments.
 
@@ -120,10 +127,10 @@ The return is bound to the same browser session, account, and tenant that starte
 SPA retries briefly for normal Microsoft Graph propagation, and repeating approval updates the
 same enterprise application rather than creating another one.
 
-For development, the developer registration and its derived enterprise application can coexist
-in the same tenant. Once that enterprise application exists, the developer-registration
-reconciliation command above deliberately stops at its no-service-principal safety check. Remove
-the test enterprise application before running that developer bootstrap command again.
+For development, the home-tenant application object and its derived local enterprise application
+can and should coexist in the same tenant. The reconciliation command verifies and preserves the
+enterprise application; it never requires uninstalling a valid local tenant installation merely to
+update the home application object.
 
 ## Delete the application
 
@@ -148,7 +155,7 @@ the test enterprise application before running that developer bootstrap command 
 
 The script asks for the Application (client) ID, displays the registration it found, requires
 the client ID again as confirmation, deletes the registration, and verifies that it is no longer
-visible. This deletes the developer-owned registration.
+visible. This deletes the project-owned home-tenant registration.
 
 ## Uninstall it from a student tenant
 
@@ -177,7 +184,7 @@ confirming the destructive action.
 The script requires exactly one enterprise application with the expected client ID, developer
 tenant, display name, and application type. It explicitly removes delegated grants and app-role
 assignments, deletes only that service principal, and verifies its absence. If the student tenant
-is also the developer tenant, it records the developer registration's object ID before uninstall
+is also the application home tenant, it records the home application object's ID before uninstall
 and verifies that the same registration still exists afterward.
 
 The command is intentionally not idempotent after success: a second run stops because there is no
@@ -198,7 +205,7 @@ Do not preserve access tokens or full Graph responses as evidence.
 
    Record the full `commit` value. The site footer must show the same value.
 
-2. In Azure Cloud Shell, select the development tenant and prove the developer registration exists
+2. In Azure Cloud Shell, select the application home tenant and prove the home application object exists
    while the tenant-local enterprise application does not:
 
    ```bash
@@ -209,7 +216,7 @@ Do not preserve access tokens or full Graph responses as evidence.
      --query 'length(@)' --output tsv
    ```
 
-   Stop unless the app query returns exactly the expected developer registration and the service
+   Stop unless the app query returns exactly the expected home application object and the service
    principal count is numeric zero. If a previous student installation exists, use the student
    uninstall command above only after its separate destructive action is authorized.
 
@@ -247,7 +254,7 @@ Do not preserve access tokens or full Graph responses as evidence.
    checks from step 2. The registration must still be the same object and the service-principal
    count must be zero.
 
-6. Repeat step 3, then step 4. Reconnection must reuse the developer registration, create exactly
+6. Repeat step 3, then step 4. Reconnection must reuse the home application object, create exactly
    one tenant-local enterprise application, restore the complete delegated grant, and return the
    SPA to the connected state.
 

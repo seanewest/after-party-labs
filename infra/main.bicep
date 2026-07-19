@@ -33,6 +33,11 @@ param apiImage string
 var imageParts = split(apiImage, '@sha256:')
 var inputShapeMatches = length(imageParts) == 2 && length(last(imageParts)) == 64 && length(applicationClientId) == 36
 var targetMatches = subscription().subscriptionId == expectedSubscriptionId && tenant().tenantId == expectedTenantId && inputShapeMatches
+var ownerRoleDefinitionId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  '8e3af657-a8ff-443c-a75c-2fe8c4bcb635'
+)
+var runtimeIdentityResourceId = '${runtimeResourceGroup.id}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/${runtimeName}-identity'
 
 resource runtimeResourceGroup 'Microsoft.Resources/resourceGroups@2024-11-01' = if (targetMatches) {
   name: resourceGroupName
@@ -59,6 +64,16 @@ module runtime 'runtime.bicep' = if (targetMatches) {
   }
 }
 
+resource runtimeOwner 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (targetMatches) {
+  name: guid(subscription().id, runtimeIdentityResourceId, ownerRoleDefinitionId)
+  properties: {
+    description: 'Broad After Party runtime authority for the isolated-lab exploration pass.'
+    principalId: runtime!.outputs.identityPrincipalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: ownerRoleDefinitionId
+  }
+}
+
 output tenantId string = expectedTenantId
 output subscriptionId string = expectedSubscriptionId
 output location string = location
@@ -68,5 +83,8 @@ output apiId string = targetMatches ? runtime!.outputs.apiId : ''
 output apiUrl string = targetMatches ? runtime!.outputs.apiUrl : ''
 output authConfigId string = targetMatches ? runtime!.outputs.authConfigId : ''
 output identityId string = targetMatches ? runtime!.outputs.identityId : ''
+output identityClientId string = targetMatches ? runtime!.outputs.identityClientId : ''
+output identityPrincipalId string = targetMatches ? runtime!.outputs.identityPrincipalId : ''
+output ownerRoleAssignmentId string = targetMatches ? runtimeOwner.id : ''
 output stateContainerId string = targetMatches ? runtime!.outputs.stateContainerId : ''
 output tenantLockBlobPath string = targetMatches ? runtime!.outputs.tenantLockBlobPath : ''

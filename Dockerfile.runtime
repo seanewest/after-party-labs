@@ -1,0 +1,11 @@
+FROM node:24-alpine
+
+LABEL org.opencontainers.image.source="https://github.com/seanewest/after-party-labs"
+
+WORKDIR /app
+COPY runtime ./runtime
+
+ENV NODE_ENV=production
+EXPOSE 3000
+USER node
+CMD ["node", "runtime/server.mjs"]

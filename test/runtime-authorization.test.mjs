@@ -93,6 +93,7 @@ test('a verified operator is authorized only for the exact tenant runtime and co
 
   assert.deepEqual(result, {
     status: 'authorized',
+    callerClass: 'delegated-operator',
     operation: 'runtime.status',
     requestId,
     tenantId,
@@ -132,6 +133,7 @@ test('issuer, audience, caller application, tenant, and scope claims fail closed
     [principal({ azp: otherTenant }), 'session_invalid'],
     [principal({ tid: otherTenant, iss: `https://login.microsoftonline.com/${otherTenant}/v2.0` }), 'wrong_tenant'],
     [principal({ scp: 'User.Read' }), 'insufficient_scope'],
+    [principal({ azp: '77777777-7777-4777-8777-777777777777', scp: '', roles: 'AfterParty.Operate' }), 'session_invalid'],
   ];
 
   for (const [candidate, code] of cases) {

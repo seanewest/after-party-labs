@@ -13,25 +13,25 @@ When this document and historical code disagree, this document carries more weig
 After Party has two main entry points:
 
 - a student or operator using the public SPA;
-- an agent or workflow running a live test through GitHub.
+- a developer or agent running a live test through the same SPA path.
 
 Both should enter the same tenant-side operation system.
 
 ```text
-Student using GitHub Pages SPA ──┐
-                                 ├──> After Party API
-GitHub Actions live test ────────┘          │
-                                            ▼
-                                tenant-wide operation lock
-                                            │
-                                            ▼
-                                  generic job or operation
-                                            │
-                                            ▼
-                             Microsoft 365 and Azure changes
+Published or local SPA ──> After Party API
+                                   │
+                                   ▼
+                       tenant-wide operation lock
+                                   │
+                                   ▼
+                         generic job or operation
+                                   │
+                                   ▼
+                    Microsoft 365 and Azure changes
 ```
 
-The main distinction between student use and development use should be how the caller authenticates and starts the operation, not a separate execution architecture.
+Student use and development live testing authenticate and start operations through the same SPA
+contract. GitHub Actions runs offline CI and publishes artifacts; it has no tenant identity.
 
 ## Hosting and ownership
 
@@ -60,7 +60,7 @@ A student visits the official GitHub Pages SPA and signs into the multitenant Af
 
 The later installation step sends the signed-in administrator to that tenant's Microsoft admin-consent endpoint for the reviewed delegated permissions. It reuses the same enterprise application and returns through one-time browser state tied to the original account and tenant.
 
-After consent, the SPA checks Microsoft Graph before reporting success. It requires exactly one service principal for the configured After Party client ID, with the expected developer tenant, display name, and `Application` type. It also requires the complete tenant-wide delegated permission grant and rejects app-only grants. Because newly consented objects can take a few seconds to appear in Microsoft Graph, the check retries briefly while otherwise failing closed on a wrong or duplicate object.
+After consent, the SPA checks Microsoft Graph before reporting success. It requires exactly one service principal for the configured After Party client ID, with the expected application home tenant, display name, and `Application` type. It also requires the complete tenant-wide delegated permission grant and rejects app-only grants. Because newly consented objects can take a few seconds to appear in Microsoft Graph, the check retries briefly while otherwise failing closed on a wrong or duplicate object.
 
 The signed-in operator can then use the SPA to:
 
@@ -97,6 +97,20 @@ deployment. See [Tenant runtime bootstrap](tenant-runtime.md).
 
 ## Identities
 
+Keep the home and student tenant objects distinct even when development uses one tenant for both:
+
+1. The human bootstrap identity creates or reconciles the project-owned application object.
+2. That multitenant application object exists only in its home tenant and defines the shared client
+   ID, redirects, requested permissions, and delegated API scope.
+3. Each student tenant has its own local enterprise application/service principal for that shared
+   application ID. The student tenant issues delegated SPA API tokens through this local object;
+   the runtime does not contact the home tenant.
+4. The student tenant's runtime managed identity executes downstream work. It is not an API caller
+   and has no GitHub federated credential.
+
+In the single development tenant, the application object, its local enterprise application, and
+the runtime managed identity coexist as separate objects with separate object IDs.
+
 ### Multitenant After Party application
 
 The multitenant application is used for:
@@ -106,7 +120,12 @@ The multitenant application is used for:
 - authorizing requests from the SPA to the tenant-side API;
 - acting as the OAuth client when a simulated user must authenticate.
 
-During this exploratory stage, its permissions may be broader than the eventual product requires. Permissions should remain explicit and reviewable, but premature least-privilege work should not dominate the architecture.
+During this exploratory stage, its permissions are intentionally broader than the eventual product
+requires. The same public SPA identity requests the broad Microsoft Graph matrix plus delegated
+Azure Service Management `user_impersonation`, allowing it to inspect and manage Azure resources as
+the signed-in operator. Azure RBAC still limits which subscriptions and actions that operator can
+use. Permissions remain explicit and reviewable, but this pass does not repeatedly stop for
+least-privilege decisions that belong to later hardening.
 
 The static site receives the application's public client ID, organizational authority, redirect
 URI, and reviewed delegated-scope list through public configuration. These values identify the
@@ -136,7 +155,11 @@ IDs through the tenant state plane before an operation can start.
 
 ### Runtime managed identity
 
-The tenant-side API and jobs use an Azure managed identity for unattended work.
+The tenant-side API and jobs use an Azure managed identity for unattended work. For this
+deliberately broad exploration pass, installation assigns it Owner on the selected Azure
+subscription plus the reviewed broad Microsoft Graph application roles. Those permissions must be
+narrowed in a later hardening pass; the current goal is to avoid repeated operator intervention
+while capabilities are being discovered.
 
 This identity may be used for:
 
@@ -146,7 +169,9 @@ This identity may be used for:
 - supported app-only Microsoft Graph operations;
 - starting or coordinating tenant-side work.
 
-The managed identity is created as part of the student-owned Azure infrastructure. It does not require another manually maintained app registration.
+The managed identity is created as part of the student-owned Azure infrastructure. It does not
+require another manually maintained app registration, a GitHub account, repository access, or a
+GitHub federated credential.
 
 ### Simulated users
 
@@ -180,7 +205,7 @@ caller
 This should apply to:
 
 - student actions from the SPA;
-- GitHub Actions live tests;
+- live tests run through the published or local SPA;
 - infrastructure reconciliation;
 - baseline reconciliation;
 - scenario setup and cleanup;
@@ -216,7 +241,7 @@ lease timing. The lease ID, tokens, raw service errors, and user identity are no
 A competing caller receives sanitized owner and retry information, and an expired owner cannot
 renew or release a replacement lease. See [Tenant operation lock](tenant-lock.md).
 
-The lock is shared across the student's SPA, GitHub Actions, locally served development SPA, and tenant-side jobs. It is not a central lock hosted by After Party.
+The lock is shared across the student's SPA, locally served development SPA, and tenant-side jobs. It is not a central lock hosted by After Party.
 
 ## State and token cache
 
@@ -285,9 +310,11 @@ One specific object should not be placed under competing desired-state systems.
 
 ## Development and live testing
 
-All implementation, coordination, review, and live testing should occur through GitHub.
+All implementation, coordination, and review should occur through GitHub. Live testing uses the
+same SPA path as the student product.
 
-Agents create changes through branches and pull requests. GitHub Actions performs live deployment and validation against the development tenant.
+Agents create changes through branches and pull requests. GitHub Actions performs offline CI and
+publishes the public runtime image and SPA; it has no development-tenant identity.
 
 A PR live test should not assume that the tenant is already in the expected state.
 

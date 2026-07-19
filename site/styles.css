@@ -94,6 +94,80 @@ h1 {
   max-width: 46rem;
 }
 
+.runtime-selection {
+  display: grid;
+  gap: 1rem;
+  padding: 1.4rem;
+  border: 1px solid rgba(142, 230, 209, 0.3);
+  border-radius: 0.9rem;
+  background: rgba(13, 16, 27, 0.92);
+}
+
+.runtime-selection[hidden] {
+  display: none;
+}
+
+.runtime-selection h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1.3rem;
+}
+
+.runtime-fields {
+  display: grid;
+  grid-template-columns: minmax(8rem, auto) minmax(0, 1fr);
+  gap: 0.75rem 1rem;
+  align-items: center;
+}
+
+.runtime-fields label,
+.runtime-confirmation {
+  color: #c7cbdf;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.runtime-selection > .button {
+  justify-self: start;
+}
+
+.runtime-selection-summary {
+  display: grid;
+  grid-template-columns: minmax(8rem, auto) minmax(0, 1fr);
+  gap: 0.55rem 1rem;
+  margin: 0;
+  padding: 1rem;
+  border: 1px solid #292d42;
+  border-radius: 0.65rem;
+  background: #090c15;
+}
+
+.runtime-selection-summary[hidden] {
+  display: none;
+}
+
+.runtime-confirmation {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: start;
+  padding: 1rem;
+  border: 1px solid rgba(228, 168, 93, 0.45);
+  border-radius: 0.65rem;
+  background: rgba(228, 168, 93, 0.08);
+  line-height: 1.55;
+}
+
+.runtime-confirmation[hidden] {
+  display: none;
+}
+
+.runtime-confirmation input {
+  width: 1.15rem;
+  height: 1.15rem;
+  margin-top: 0.15rem;
+  accent-color: #8ee6d1;
+}
+
 .experiment-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 21rem), 1fr));
@@ -401,12 +475,15 @@ code {
 
 @media (max-width: 38rem) {
   .account-picker,
-  .account-details {
+  .account-details,
+  .runtime-fields,
+  .runtime-selection-summary {
     grid-template-columns: 1fr;
   }
 
   .account-picker .button,
   .actions .button,
+  .runtime-selection > .button,
   .experiment-action {
     width: 100%;
   }

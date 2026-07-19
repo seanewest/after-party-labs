@@ -1,0 +1,541 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.45.15.27210",
+      "templateHash": "11150415697938089118"
+    }
+  },
+  "parameters": {
+    "expectedTenantId": {
+      "type": "string",
+      "metadata": {
+        "description": "The tenant selected and verified by the signed-in operator."
+      }
+    },
+    "expectedSubscriptionId": {
+      "type": "string",
+      "metadata": {
+        "description": "The Azure subscription selected and verified by the signed-in operator."
+      }
+    },
+    "applicationClientId": {
+      "type": "string",
+      "metadata": {
+        "description": "The public multitenant After Party application that may call the runtime API."
+      }
+    },
+    "location": {
+      "type": "string",
+      "metadata": {
+        "description": "The Azure region validated for every runtime resource type."
+      }
+    },
+    "resourceGroupName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 90,
+      "metadata": {
+        "description": "The resource group owned by this After Party runtime."
+      }
+    },
+    "runtimeName": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 30,
+      "metadata": {
+        "description": "A short lowercase name used for deterministic runtime resource names."
+      }
+    },
+    "commit": {
+      "type": "string",
+      "minLength": 40,
+      "maxLength": 40,
+      "metadata": {
+        "description": "The exact source commit deployed by this runtime."
+      }
+    },
+    "apiImage": {
+      "type": "string",
+      "metadata": {
+        "description": "A public API container image pinned to a sha256 digest."
+      }
+    }
+  },
+  "variables": {
+    "imageParts": "[split(parameters('apiImage'), '@sha256:')]",
+    "inputShapeMatches": "[and(and(equals(length(variables('imageParts')), 2), equals(length(last(variables('imageParts'))), 64)), equals(length(parameters('applicationClientId')), 36))]",
+    "targetMatches": "[and(and(equals(subscription().subscriptionId, parameters('expectedSubscriptionId')), equals(tenant().tenantId, parameters('expectedTenantId'))), variables('inputShapeMatches'))]",
+    "ownerRoleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '8e3af657-a8ff-443c-a75c-2fe8c4bcb635')]",
+    "runtimeIdentityResourceId": "[format('{0}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{1}-identity', subscriptionResourceId('Microsoft.Resources/resourceGroups', parameters('resourceGroupName')), parameters('runtimeName'))]"
+  },
+  "resources": [
+    {
+      "condition": "[variables('targetMatches')]",
+      "type": "Microsoft.Resources/resourceGroups",
+      "apiVersion": "2024-11-01",
+      "name": "[parameters('resourceGroupName')]",
+      "location": "[parameters('location')]",
+      "tags": {
+        "after-party-managed": "true",
+        "after-party-tenant-id": "[parameters('expectedTenantId')]",
+        "after-party-subscription-id": "[parameters('expectedSubscriptionId')]",
+        "after-party-commit": "[parameters('commit')]"
+      }
+    },
+    {
+      "condition": "[variables('targetMatches')]",
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "name": "[guid(subscription().id, variables('runtimeIdentityResourceId'), variables('ownerRoleDefinitionId'))]",
+      "properties": {
+        "description": "Broad After Party runtime authority for the isolated-lab exploration pass.",
+        "principalId": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('{0}-runtime', parameters('runtimeName'))), '2025-04-01').outputs.identityPrincipalId.value]",
+        "principalType": "ServicePrincipal",
+        "roleDefinitionId": "[variables('ownerRoleDefinitionId')]"
+      },
+      "dependsOn": [
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('{0}-runtime', parameters('runtimeName')))]",
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', parameters('resourceGroupName'))]"
+      ]
+    },
+    {
+      "condition": "[variables('targetMatches')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "[format('{0}-runtime', parameters('runtimeName'))]",
+      "resourceGroup": "[parameters('resourceGroupName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "expectedTenantId": {
+            "value": "[parameters('expectedTenantId')]"
+          },
+          "expectedSubscriptionId": {
+            "value": "[parameters('expectedSubscriptionId')]"
+          },
+          "applicationClientId": {
+            "value": "[parameters('applicationClientId')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "runtimeName": {
+            "value": "[parameters('runtimeName')]"
+          },
+          "commit": {
+            "value": "[parameters('commit')]"
+          },
+          "apiImage": {
+            "value": "[parameters('apiImage')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.45.15.27210",
+              "templateHash": "8314741032827233763"
+            }
+          },
+          "parameters": {
+            "expectedTenantId": {
+              "type": "string"
+            },
+            "expectedSubscriptionId": {
+              "type": "string"
+            },
+            "applicationClientId": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            },
+            "runtimeName": {
+              "type": "string"
+            },
+            "commit": {
+              "type": "string"
+            },
+            "apiImage": {
+              "type": "string"
+            }
+          },
+          "variables": {
+            "tags": {
+              "after-party-managed": "true",
+              "after-party-tenant-id": "[parameters('expectedTenantId')]",
+              "after-party-subscription-id": "[parameters('expectedSubscriptionId')]",
+              "after-party-commit": "[parameters('commit')]"
+            },
+            "identityName": "[format('{0}-identity', parameters('runtimeName'))]",
+            "environmentName": "[format('{0}-environment', parameters('runtimeName'))]",
+            "apiName": "[format('{0}-api', parameters('runtimeName'))]",
+            "apiResourceId": "[format('{0}/providers/Microsoft.App/containerApps/{1}', resourceGroup().id, variables('apiName'))]",
+            "publishedSpaOrigin": "https://seanewest.github.io",
+            "localSpaOrigin": "http://127.0.0.1:4173",
+            "storageName": "[take(format('ap{0}', uniqueString(subscription().id, toLower(resourceGroup().id), parameters('runtimeName'))), 24)]",
+            "storageBlobDataContributorRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+              "apiVersion": "2023-01-31",
+              "name": "[variables('identityName')]",
+              "location": "[parameters('location')]",
+              "tags": "[union(variables('tags'), createObject('after-party-component', 'runtime-identity'))]"
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts",
+              "apiVersion": "2025-01-01",
+              "name": "[variables('storageName')]",
+              "location": "[parameters('location')]",
+              "kind": "StorageV2",
+              "sku": {
+                "name": "Standard_LRS"
+              },
+              "tags": "[union(variables('tags'), createObject('after-party-component', 'state'))]",
+              "properties": {
+                "accessTier": "Hot",
+                "allowBlobPublicAccess": false,
+                "allowCrossTenantReplication": false,
+                "allowSharedKeyAccess": false,
+                "defaultToOAuthAuthentication": true,
+                "minimumTlsVersion": "TLS1_2",
+                "publicNetworkAccess": "Enabled",
+                "supportsHttpsTrafficOnly": true
+              }
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/blobServices",
+              "apiVersion": "2025-01-01",
+              "name": "[format('{0}/{1}', variables('storageName'), 'default')]",
+              "properties": {
+                "deleteRetentionPolicy": {
+                  "enabled": true,
+                  "days": 7
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+              "apiVersion": "2025-01-01",
+              "name": "[format('{0}/{1}/{2}', variables('storageName'), 'default', 'state')]",
+              "properties": {
+                "publicAccess": "None"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('storageName'), 'default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', 'state')]",
+              "name": "[guid(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', 'state'), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), variables('storageBlobDataContributorRoleId'))]",
+              "properties": {
+                "description": "After Party runtime access to its tenant-owned state container.",
+                "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), '2023-01-31').principalId]",
+                "principalType": "ServicePrincipal",
+                "roleDefinitionId": "[variables('storageBlobDataContributorRoleId')]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))]",
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', 'state')]"
+              ]
+            },
+            {
+              "type": "Microsoft.App/managedEnvironments",
+              "apiVersion": "2025-01-01",
+              "name": "[variables('environmentName')]",
+              "location": "[parameters('location')]",
+              "tags": "[union(variables('tags'), createObject('after-party-component', 'container-environment'))]",
+              "properties": {
+                "appLogsConfiguration": {
+                  "destination": "none"
+                }
+              }
+            },
+            {
+              "type": "Microsoft.App/containerApps",
+              "apiVersion": "2025-01-01",
+              "name": "[variables('apiName')]",
+              "location": "[parameters('location')]",
+              "tags": "[union(variables('tags'), createObject('after-party-component', 'api'))]",
+              "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                  "[format('{0}', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')))]": {}
+                }
+              },
+              "properties": {
+                "environmentId": "[resourceId('Microsoft.App/managedEnvironments', variables('environmentName'))]",
+                "configuration": {
+                  "activeRevisionsMode": "Single",
+                  "ingress": {
+                    "allowInsecure": false,
+                    "external": true,
+                    "corsPolicy": {
+                      "allowCredentials": false,
+                      "allowedOrigins": [
+                        "[variables('publishedSpaOrigin')]",
+                        "[variables('localSpaOrigin')]"
+                      ],
+                      "allowedMethods": [
+                        "POST",
+                        "OPTIONS"
+                      ],
+                      "allowedHeaders": [
+                        "Authorization",
+                        "Content-Type"
+                      ],
+                      "exposeHeaders": [],
+                      "maxAge": 300
+                    },
+                    "targetPort": 3000,
+                    "traffic": [
+                      {
+                        "latestRevision": true,
+                        "weight": 100
+                      }
+                    ],
+                    "transport": "http"
+                  }
+                },
+                "template": {
+                  "containers": [
+                    {
+                      "name": "api",
+                      "image": "[parameters('apiImage')]",
+                      "env": [
+                        {
+                          "name": "AFTER_PARTY_TENANT_ID",
+                          "value": "[parameters('expectedTenantId')]"
+                        },
+                        {
+                          "name": "AFTER_PARTY_SUBSCRIPTION_ID",
+                          "value": "[parameters('expectedSubscriptionId')]"
+                        },
+                        {
+                          "name": "AFTER_PARTY_APPLICATION_ID",
+                          "value": "[parameters('applicationClientId')]"
+                        },
+                        {
+                          "name": "AFTER_PARTY_API_AUDIENCE",
+                          "value": "[parameters('applicationClientId')]"
+                        },
+                        {
+                          "name": "AFTER_PARTY_API_SCOPE",
+                          "value": "AfterParty.Operate"
+                        },
+                        {
+                          "name": "AFTER_PARTY_RUNTIME_ID",
+                          "value": "[variables('apiResourceId')]"
+                        },
+                        {
+                          "name": "AFTER_PARTY_RUNTIME_IDENTITY_CLIENT_ID",
+                          "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), '2023-01-31').clientId]"
+                        },
+                        {
+                          "name": "AFTER_PARTY_COMMIT",
+                          "value": "[parameters('commit')]"
+                        },
+                        {
+                          "name": "AFTER_PARTY_STATE_ACCOUNT",
+                          "value": "[variables('storageName')]"
+                        },
+                        {
+                          "name": "AFTER_PARTY_STATE_CONTAINER",
+                          "value": "state"
+                        },
+                        {
+                          "name": "AFTER_PARTY_STATE_CONTAINER_URL",
+                          "value": "[format('https://{0}.blob.{1}/{2}', variables('storageName'), environment().suffixes.storage, 'state')]"
+                        },
+                        {
+                          "name": "AFTER_PARTY_TENANT_LOCK_BLOB",
+                          "value": "locks/tenant-operation.json"
+                        },
+                        {
+                          "name": "AZURE_CLIENT_ID",
+                          "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), '2023-01-31').clientId]"
+                        }
+                      ],
+                      "resources": {
+                        "cpu": "[json('0.25')]",
+                        "memory": "0.5Gi"
+                      }
+                    }
+                  ],
+                  "scale": {
+                    "minReplicas": 0,
+                    "maxReplicas": 1,
+                    "rules": [
+                      {
+                        "name": "http",
+                        "http": {
+                          "metadata": {
+                            "concurrentRequests": "10"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.App/managedEnvironments', variables('environmentName'))]",
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))]",
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', 'state')]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.App/containerApps/authConfigs",
+              "apiVersion": "2025-01-01",
+              "name": "[format('{0}/{1}', variables('apiName'), 'current')]",
+              "properties": {
+                "platform": {
+                  "enabled": true
+                },
+                "globalValidation": {
+                  "unauthenticatedClientAction": "Return401"
+                },
+                "httpSettings": {
+                  "requireHttps": true
+                },
+                "identityProviders": {
+                  "azureActiveDirectory": {
+                    "enabled": true,
+                    "registration": {
+                      "clientId": "[parameters('applicationClientId')]",
+                      "openIdIssuer": "[format('{0}{1}/v2.0', environment().authentication.loginEndpoint, parameters('expectedTenantId'))]"
+                    },
+                    "validation": {
+                      "allowedAudiences": [
+                        "[parameters('applicationClientId')]"
+                      ],
+                      "defaultAuthorizationPolicy": {
+                        "allowedApplications": [
+                          "[parameters('applicationClientId')]"
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.App/containerApps', variables('apiName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "apiId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.App/containerApps', variables('apiName'))]"
+            },
+            "apiUrl": {
+              "type": "string",
+              "value": "[format('https://{0}', reference(resourceId('Microsoft.App/containerApps', variables('apiName')), '2025-01-01').configuration.ingress.fqdn)]"
+            },
+            "authConfigId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.App/containerApps/authConfigs', variables('apiName'), 'current')]"
+            },
+            "identityId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))]"
+            },
+            "identityClientId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), '2023-01-31').clientId]"
+            },
+            "identityPrincipalId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), '2023-01-31').principalId]"
+            },
+            "stateContainerId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', 'state')]"
+            },
+            "tenantLockBlobPath": {
+              "type": "string",
+              "value": "locks/tenant-operation.json"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', parameters('resourceGroupName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "tenantId": {
+      "type": "string",
+      "value": "[parameters('expectedTenantId')]"
+    },
+    "subscriptionId": {
+      "type": "string",
+      "value": "[parameters('expectedSubscriptionId')]"
+    },
+    "location": {
+      "type": "string",
+      "value": "[parameters('location')]"
+    },
+    "commit": {
+      "type": "string",
+      "value": "[parameters('commit')]"
+    },
+    "resourceGroupId": {
+      "type": "string",
+      "value": "[if(variables('targetMatches'), subscriptionResourceId('Microsoft.Resources/resourceGroups', parameters('resourceGroupName')), '')]"
+    },
+    "apiId": {
+      "type": "string",
+      "value": "[if(variables('targetMatches'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('{0}-runtime', parameters('runtimeName'))), '2025-04-01').outputs.apiId.value, '')]"
+    },
+    "apiUrl": {
+      "type": "string",
+      "value": "[if(variables('targetMatches'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('{0}-runtime', parameters('runtimeName'))), '2025-04-01').outputs.apiUrl.value, '')]"
+    },
+    "authConfigId": {
+      "type": "string",
+      "value": "[if(variables('targetMatches'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('{0}-runtime', parameters('runtimeName'))), '2025-04-01').outputs.authConfigId.value, '')]"
+    },
+    "identityId": {
+      "type": "string",
+      "value": "[if(variables('targetMatches'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('{0}-runtime', parameters('runtimeName'))), '2025-04-01').outputs.identityId.value, '')]"
+    },
+    "identityClientId": {
+      "type": "string",
+      "value": "[if(variables('targetMatches'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('{0}-runtime', parameters('runtimeName'))), '2025-04-01').outputs.identityClientId.value, '')]"
+    },
+    "identityPrincipalId": {
+      "type": "string",
+      "value": "[if(variables('targetMatches'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('{0}-runtime', parameters('runtimeName'))), '2025-04-01').outputs.identityPrincipalId.value, '')]"
+    },
+    "ownerRoleAssignmentId": {
+      "type": "string",
+      "value": "[if(variables('targetMatches'), subscriptionResourceId('Microsoft.Authorization/roleAssignments', guid(subscription().id, variables('runtimeIdentityResourceId'), variables('ownerRoleDefinitionId'))), '')]"
+    },
+    "stateContainerId": {
+      "type": "string",
+      "value": "[if(variables('targetMatches'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('{0}-runtime', parameters('runtimeName'))), '2025-04-01').outputs.stateContainerId.value, '')]"
+    },
+    "tenantLockBlobPath": {
+      "type": "string",
+      "value": "[if(variables('targetMatches'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('{0}-runtime', parameters('runtimeName'))), '2025-04-01').outputs.tenantLockBlobPath.value, '')]"
+    }
+  }
+}

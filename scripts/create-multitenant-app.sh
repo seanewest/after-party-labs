@@ -18,12 +18,15 @@
   LOCAL_SPA_REDIRECT_URI='http://127.0.0.1:4173/'
   graph_applications_url='https://graph.microsoft.com/v1.0/applications'
   microsoft_graph_app_id='00000003-0000-0000-c000-000000000000'
+  azure_service_management_app_id='797f4846-ba00-4fd7-ba43-dac1f8f63013'
+  azure_service_management_permission_id='41094075-9dad-400e-a0bd-54e686782033'
   runtime_api_scope_id='5c9bfc9c-4f2e-477d-a572-3d7fabe8542d'
   runtime_api_scope_name='AfterParty.Operate'
   microsoft_graph_permission_names=(
     'User.Read'
     'Directory.ReadWrite.All'
     'Application.ReadWrite.All'
+    'AppRoleAssignment.ReadWrite.All'
     'Group.ReadWrite.All'
     'User.ReadWrite.All'
     'RoleManagement.ReadWrite.Directory'
@@ -40,6 +43,7 @@
     'e1fe6dd8-ba31-4d61-89e7-88639da4683d'
     'c5366453-9fb0-48a5-a156-24f0c49a4b84'
     'bdfbf15f-ee85-4955-8675-146e8e5296b5'
+    '84bccea3-f856-4a8a-967b-dbe0a3d53a64'
     '4e46008b-f24c-477d-8fff-7bb4ec7aafe0'
     '204e0828-b5ca-4ad8-b9f3-f32a958e7cc4'
     'd01b97e9-cbc0-49fe-810a-750afd5527a3'
@@ -98,7 +102,7 @@
     fi
     resource_access+="{\"id\":\"$permission_id\",\"type\":\"Scope\"}"
   done
-  required_resource_access="[{\"resourceAppId\":\"$microsoft_graph_app_id\",\"resourceAccess\":[$resource_access]}]"
+  required_resource_access="[{\"resourceAppId\":\"$microsoft_graph_app_id\",\"resourceAccess\":[$resource_access]},{\"resourceAppId\":\"$azure_service_management_app_id\",\"resourceAccess\":[{\"id\":\"$azure_service_management_permission_id\",\"type\":\"Scope\"}]}]"
   expected_permission_ids="$(
     printf '%s\n' "${microsoft_graph_permission_ids[@]}" | sort | paste -sd, -
   )"
@@ -140,6 +144,78 @@
   created_app_id=''
   target_app_id=''
   target_object_id=''
+  local_service_principal_id=''
+
+  verify_optional_local_service_principal() {
+    local app_id="$1"
+    local expected_tenant_id="$2"
+    local count
+    local actual_app_id
+    local actual_display_name
+    local actual_owner_tenant_id
+    local actual_type
+
+    count="$(
+      az ad sp list \
+        --filter "appId eq '$app_id'" \
+        --query 'length(@)' \
+        --output tsv \
+        --only-show-errors
+    )"
+    if [[ ! "$count" =~ ^[0-9]+$ || "$count" -gt 1 ]]; then
+      echo "Expected at most one tenant-local enterprise application for client ID $app_id; found $count." >&2
+      return 1
+    fi
+    if [[ "$count" == '0' ]]; then
+      local_service_principal_id=''
+      return 0
+    fi
+
+    local_service_principal_id="$(
+      az ad sp list \
+        --filter "appId eq '$app_id'" \
+        --query '[0].id' \
+        --output tsv \
+        --only-show-errors
+    )"
+    actual_app_id="$(
+      az ad sp list \
+        --filter "appId eq '$app_id'" \
+        --query '[0].appId' \
+        --output tsv \
+        --only-show-errors
+    )"
+    actual_owner_tenant_id="$(
+      az ad sp list \
+        --filter "appId eq '$app_id'" \
+        --query '[0].appOwnerOrganizationId' \
+        --output tsv \
+        --only-show-errors
+    )"
+    actual_display_name="$(
+      az ad sp list \
+        --filter "appId eq '$app_id'" \
+        --query '[0].displayName' \
+        --output tsv \
+        --only-show-errors
+    )"
+    actual_type="$(
+      az ad sp list \
+        --filter "appId eq '$app_id'" \
+        --query '[0].servicePrincipalType' \
+        --output tsv \
+        --only-show-errors
+    )"
+    if [[ ! "$local_service_principal_id" =~ $uuid_pattern ||
+          "$actual_app_id" != "$app_id" ||
+          "$actual_owner_tenant_id" != "$expected_tenant_id" ||
+          "$actual_display_name" != "$APP_DISPLAY_NAME" ||
+          "$actual_type" != 'Application' ]]; then
+      echo 'The tenant-local enterprise application does not match the home application object.' >&2
+      return 1
+    fi
+  }
+
   cleanup_on_error() {
     status=$?
     trap - EXIT
@@ -207,16 +283,7 @@
       exit 1
     fi
 
-    existing_service_principal_count="$(
-      az ad sp list \
-        --filter "appId eq '$AFTER_PARTY_APP_ID'" \
-        --query 'length(@)' \
-        --output tsv \
-        --only-show-errors
-    )"
-    if [[ ! "$existing_service_principal_count" =~ ^[0-9]+$ ||
-          "$existing_service_principal_count" != '0' ]]; then
-      echo 'The existing application already has a tenant service principal; refusing developer-app reconciliation.' >&2
+    if ! verify_optional_local_service_principal "$AFTER_PARTY_APP_ID" "$tenant_id"; then
       echo 'No changes were made.' >&2
       exit 1
     fi
@@ -242,7 +309,7 @@
   fi
 
   runtime_api_request_body="$(printf \
-    '{"identifierUris":["api://%s"],"api":{"requestedAccessTokenVersion":2,"oauth2PermissionScopes":[{"adminConsentDescription":"Allow the After Party SPA to call the matching tenant runtime as the signed-in operator.","adminConsentDisplayName":"Operate the After Party tenant runtime","id":"%s","isEnabled":true,"type":"Admin","userConsentDescription":null,"userConsentDisplayName":null,"value":"%s"}],"preAuthorizedApplications":[{"appId":"%s","delegatedPermissionIds":["%s"]}]}}' \
+    '{"identifierUris":["api://%s"],"api":{"requestedAccessTokenVersion":2,"oauth2PermissionScopes":[{"adminConsentDescription":"Allow the After Party SPA to call the matching tenant runtime as the signed-in operator.","adminConsentDisplayName":"Operate the After Party tenant runtime","id":"%s","isEnabled":true,"type":"Admin","userConsentDescription":null,"userConsentDisplayName":null,"value":"%s"}],"preAuthorizedApplications":[{"appId":"%s","delegatedPermissionIds":["%s"]}]},"appRoles":[]}' \
     "$target_app_id" \
     "$runtime_api_scope_id" \
     "$runtime_api_scope_name" \
@@ -278,6 +345,13 @@
         --output tsv \
         --only-show-errors 2>/dev/null || true
     )"
+    actual_azure_management_permission_ids="$(
+      az ad app show \
+        --id "$target_app_id" \
+        --query "join(',', sort(requiredResourceAccess[?resourceAppId == '$azure_service_management_app_id'].resourceAccess[].id[]))" \
+        --output tsv \
+        --only-show-errors 2>/dev/null || true
+    )"
     actual_identifier_uri="$(
       az ad app show \
         --id "$target_app_id" \
@@ -306,13 +380,22 @@
         --output tsv \
         --only-show-errors 2>/dev/null || true
     )"
+    actual_runtime_role_count="$(
+      az ad app show \
+        --id "$target_app_id" \
+        --query 'length(appRoles)' \
+        --output tsv \
+        --only-show-errors 2>/dev/null || true
+    )"
     if [[ "$actual_audience" == 'AzureADMultipleOrgs' &&
           "$actual_redirect_uris" == "$expected_redirect_uris" &&
           "$actual_permission_ids" == "$expected_permission_ids" &&
+          "$actual_azure_management_permission_ids" == "$azure_service_management_permission_id" &&
           "$actual_identifier_uri" == "api://$target_app_id" &&
           "$actual_token_version" == '2' &&
           "$actual_runtime_scope_id" == "$runtime_api_scope_id" &&
-          "$actual_preauthorized_scope_id" == "$runtime_api_scope_id" ]]; then
+          "$actual_preauthorized_scope_id" == "$runtime_api_scope_id" &&
+          "$actual_runtime_role_count" == '0' ]]; then
       verified='true'
       break
     fi
@@ -324,15 +407,20 @@
     exit 1
   fi
 
-  service_principal_count="$(
-    az ad sp list \
-      --filter "appId eq '$target_app_id'" \
-      --query 'length(@)' \
-      --output tsv \
-      --only-show-errors
-  )"
-  if [[ ! "$service_principal_count" =~ ^[0-9]+$ || "$service_principal_count" != '0' ]]; then
-    echo 'The app registration unexpectedly created a service principal; refusing to keep a partial student installation.' >&2
+  if [[ "$operation" == 'create' ]]; then
+    service_principal_count="$(
+      az ad sp list \
+        --filter "appId eq '$target_app_id'" \
+        --query 'length(@)' \
+        --output tsv \
+        --only-show-errors
+    )"
+    if [[ ! "$service_principal_count" =~ ^[0-9]+$ || "$service_principal_count" != '0' ]]; then
+      echo 'The app registration unexpectedly created a service principal; refusing to keep a partial student installation.' >&2
+      exit 1
+    fi
+  elif ! verify_optional_local_service_principal "$target_app_id" "$tenant_id"; then
+    echo 'The home application was changed, but its tenant-local enterprise application no longer matches. Reconcile the tenant installation before continuing.' >&2
     exit 1
   fi
 
@@ -352,6 +440,13 @@
   printf 'Graph token expires: %s\n' "$token_expiry"
   printf '\nConfigured %s delegated Microsoft Graph permissions:\n' "${#microsoft_graph_permission_names[@]}"
   printf '  %s\n' "${microsoft_graph_permission_names[@]}"
-  printf 'No client secret, certificate, or service principal was created.\n'
+  printf 'Configured delegated Azure management permission:\n'
+  printf '  Azure Service Management / user_impersonation\n'
+  if [[ -n "$local_service_principal_id" ]]; then
+    printf 'Tenant-local enterprise application preserved: %s\n' "$local_service_principal_id"
+    printf 'No client secret, certificate, or service principal was created or deleted.\n'
+  else
+    printf 'No client secret, certificate, or service principal was created.\n'
+  fi
   printf 'Save the application and tenant IDs for the delete script.\n'
 )

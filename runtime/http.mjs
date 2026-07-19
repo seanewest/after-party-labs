@@ -1,11 +1,13 @@
 import { Buffer } from 'node:buffer';
 
 import { RuntimeAuthorizationError } from './authorization.mjs';
+import { TenantLockError } from './tenant-lock.mjs';
 
 const CLAIM_NAMES = Object.freeze({
   'http://schemas.microsoft.com/identity/claims/objectidentifier': 'oid',
   'http://schemas.microsoft.com/identity/claims/scope': 'scp',
   'http://schemas.microsoft.com/identity/claims/tenantid': 'tid',
+  'http://schemas.microsoft.com/ws/2008/06/identity/claims/role': 'roles',
 });
 
 function rejected(status, code) {
@@ -49,7 +51,7 @@ export function decodeContainerAppsPrincipal(encoded) {
   for (const claim of value.claims) {
     const originalName = String(claim?.typ || '');
     const name = CLAIM_NAMES[originalName.toLowerCase()] || originalName;
-    if (!name || !['aud', 'azp', 'exp', 'iss', 'nbf', 'oid', 'scp', 'tid', 'ver'].includes(name)) {
+    if (!name || !['aud', 'azp', 'exp', 'iss', 'nbf', 'oid', 'roles', 'scp', 'tid', 'ver'].includes(name)) {
       continue;
     }
     if (Object.hasOwn(claims, name)) {
@@ -60,8 +62,17 @@ export function decodeContainerAppsPrincipal(encoded) {
   return Object.freeze({ authenticated: true, claims: Object.freeze(claims) });
 }
 
-export function createRuntimeAuthorizationHandler({ authorizer, getInstallation }) {
-  if (!authorizer || typeof authorizer.authorize !== 'function' || typeof getInstallation !== 'function') {
+export function createRuntimeAuthorizationHandler({
+  authorizer,
+  getInstallation,
+  runOperation = async (authorized) => authorized,
+}) {
+  if (
+    !authorizer ||
+    typeof authorizer.authorize !== 'function' ||
+    typeof getInstallation !== 'function' ||
+    typeof runOperation !== 'function'
+  ) {
     throw new RuntimeAuthorizationError('runtime_misconfigured', 500);
   }
   return Object.freeze({
@@ -74,11 +85,12 @@ export function createRuntimeAuthorizationHandler({ authorizer, getInstallation 
           headerValue(request.headers, 'x-ms-client-principal'),
         );
         const installation = await getInstallation();
-        const result = await authorizer.authorize({
+        const authorized = await authorizer.authorize({
           principal,
           request: request.body,
           installation,
         });
+        const result = await runOperation(authorized);
         return Object.freeze({
           status: 200,
           headers: Object.freeze({
@@ -90,6 +102,9 @@ export function createRuntimeAuthorizationHandler({ authorizer, getInstallation 
       } catch (error) {
         if (error instanceof RuntimeAuthorizationError) {
           return rejected(error.status, error.code);
+        }
+        if (error instanceof TenantLockError && error.code === 'lock_busy') {
+          return rejected(409, 'lock_busy');
         }
         return rejected(503, 'runtime_unavailable');
       }

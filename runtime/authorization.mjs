@@ -59,7 +59,13 @@ function validateConfiguration(configuration) {
   if (!operations.length || operations.some((operation) => !OPERATION_PATTERN.test(operation))) {
     fail('runtime_misconfigured', 500);
   }
-  return Object.freeze({ applicationId, commit, operations, runtimeId, tenantId });
+  return Object.freeze({
+    applicationId,
+    commit,
+    operations,
+    runtimeId,
+    tenantId,
+  });
 }
 
 function validateRequest(request, configuration) {
@@ -125,7 +131,12 @@ function validatePrincipal(principal, configuration, nowSeconds) {
   if (!scopes.has(RUNTIME_API_SCOPE_NAME)) {
     fail('insufficient_scope', 403);
   }
-  return Object.freeze({ expiresAt, operatorId, tenantId });
+  return Object.freeze({
+    callerClass: 'delegated-operator',
+    expiresAt,
+    operatorId,
+    tenantId,
+  });
 }
 
 function validateInstallation(installation, configuration) {
@@ -195,6 +206,7 @@ export function createRuntimeOperationAuthorizer({ configuration, replayStore, n
 
       return Object.freeze({
         status: 'authorized',
+        callerClass: operator.callerClass,
         operation: validatedRequest.operation,
         requestId: validatedRequest.requestId,
         tenantId: expected.tenantId,

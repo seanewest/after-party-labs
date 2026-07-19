@@ -3,6 +3,7 @@ import { Buffer } from 'node:buffer';
 import test from 'node:test';
 
 import { RuntimeAuthorizationError } from '../runtime/authorization.mjs';
+import { TenantLockError } from '../runtime/tenant-lock.mjs';
 import {
   createRuntimeAuthorizationHandler,
   decodeContainerAppsPrincipal,
@@ -35,11 +36,15 @@ function encodedPrincipal(overrides = {}) {
 }
 
 test('the Container Apps principal adapter preserves only authorization claims', () => {
-  const principal = decodeContainerAppsPrincipal(encodedPrincipal({ email: 'operator@example.test' }));
+  const principal = decodeContainerAppsPrincipal(encodedPrincipal({
+    email: 'operator@example.test',
+    'http://schemas.microsoft.com/ws/2008/06/identity/claims/role': 'AfterParty.Operate',
+  }));
   assert.equal(principal.authenticated, true);
   assert.equal(principal.claims.tid, '11111111-1111-1111-1111-111111111111');
   assert.equal(principal.claims.oid, '22222222-2222-2222-2222-222222222222');
   assert.equal(principal.claims.scp, 'AfterParty.Operate');
+  assert.equal(principal.claims.roles, 'AfterParty.Operate');
   assert.equal(Object.hasOwn(principal.claims, 'email'), false);
   assert.equal(principal.claims.exp, 2_000_003_600);
 });
@@ -56,6 +61,7 @@ test('duplicate authorization claims are rejected as ambiguous', () => {
 test('the HTTP contract passes platform identity and installation evidence to authorization', async () => {
   const calls = [];
   const result = Object.freeze({ status: 'authorized', requestId: 'request-id' });
+  const executed = Object.freeze({ ...result, operation: 'runtime.status' });
   const handler = createRuntimeAuthorizationHandler({
     authorizer: {
       async authorize(value) {
@@ -65,6 +71,10 @@ test('the HTTP contract passes platform identity and installation evidence to au
     },
     async getInstallation() {
       return { status: 'verified' };
+    },
+    async runOperation(value) {
+      calls.push({ executed: value });
+      return executed;
     },
   });
 
@@ -77,9 +87,10 @@ test('the HTTP contract passes platform identity and installation evidence to au
 
   assert.equal(response.status, 200);
   assert.equal(response.headers['cache-control'], 'no-store');
-  assert.equal(response.body, result);
+  assert.equal(response.body, executed);
   assert.equal(calls[0].principal.claims.scp, 'AfterParty.Operate');
   assert.deepEqual(calls[0].installation, { status: 'verified' });
+  assert.equal(calls[1].executed, result);
 });
 
 test('malformed principals, authorization failures, and internal errors return fixed codes', async () => {
@@ -128,4 +139,30 @@ test('malformed principals, authorization failures, and internal errors return f
   });
   assert.deepEqual(unavailable.body, { status: 'rejected', code: 'runtime_unavailable' });
   assert.doesNotMatch(JSON.stringify(unavailable), /storage account|credential detail/);
+});
+
+test('an externally held tenant lock returns only a fixed contention response', async () => {
+  const handler = createRuntimeAuthorizationHandler({
+    authorizer: { authorize: async () => ({ operation: 'lock.test' }) },
+    getInstallation: async () => ({ status: 'verified' }),
+    runOperation: async () => {
+      throw new TenantLockError('lock_busy', {
+        owner: { operationId: 'secret-operation', source: 'private-source' },
+      });
+    },
+  });
+
+  const response = await handler.handle({
+    method: 'POST',
+    path: '/operations',
+    headers: { 'x-ms-client-principal': encodedPrincipal() },
+    body: { operation: 'lock.test' },
+  });
+
+  assert.deepEqual(response, {
+    status: 409,
+    headers: { 'cache-control': 'no-store', 'content-type': 'application/json' },
+    body: { status: 'rejected', code: 'lock_busy' },
+  });
+  assert.doesNotMatch(JSON.stringify(response), /secret-operation|private-source/);
 });

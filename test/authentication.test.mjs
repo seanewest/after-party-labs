@@ -202,6 +202,30 @@ test('runtime tokens are requested only for the reviewed After Party API scope',
   );
 });
 
+test('Azure management tokens use only the reviewed broad delegated scope', async () => {
+  const selected = account({ tenantId: '33333333-3333-3333-3333-333333333333' });
+  const msal = fakeMsal({ accounts: [selected], activeAccount: selected });
+  const authentication = createAuthentication({
+    configuration,
+    createPublicClientApplication: msal.createPublicClientApplication,
+  });
+  const scope = 'https://management.core.windows.net//user_impersonation';
+
+  assert.equal(await authentication.acquireAzureManagementToken(scope), 'graph-access-token');
+  assert.deepEqual(msal.calls.at(-1), [
+    'acquireTokenSilent',
+    {
+      account: selected,
+      authority: `https://login.microsoftonline.com/${selected.tenantId}`,
+      scopes: [scope],
+    },
+  ]);
+  await assert.rejects(
+    authentication.acquireAzureManagementToken('https://management.azure.com/.default'),
+    (error) => error.code === 'token_unavailable',
+  );
+});
+
 test('account details expose identity and tenant without token data', () => {
   assert.deepEqual(describeAccount(account()), {
     displayName: 'Ada Lovelace',
@@ -347,4 +371,37 @@ test('the installation controller resumes consent for the same account and rende
     ['render', 'installed'],
     ['busy', false],
   ]);
+});
+
+test('the installation controller verifies an already connected tenant without a consent callback', async () => {
+  const selected = account({ tenantId: '33333333-3333-3333-3333-333333333333' });
+  let verified;
+  const controller = createInstallationController({
+    authentication: {
+      getState: () => ({ status: 'signed-in', account: selected }),
+      acquireGraphToken: async () => 'access-token',
+    },
+    installation: {
+      consumeCallback: () => null,
+      async verifyCurrent(input) {
+        verified = input;
+        return {
+          status: 'installed',
+          tenantId: selected.tenantId,
+          servicePrincipalId: '44444444-4444-4444-8444-444444444444',
+        };
+      },
+    },
+    scopes: ['User.Read'],
+    view: {
+      setInstallationBusy() {},
+      renderInstallation() {},
+      renderInstallationError() {},
+    },
+    currentUrl: () => 'https://example.test/',
+  });
+
+  const state = await controller.initialize();
+  assert.equal(state.status, 'installed');
+  assert.deepEqual(verified, { account: selected, accessToken: 'access-token' });
 });

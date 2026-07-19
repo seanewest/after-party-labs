@@ -42,7 +42,11 @@ jobs:
       - name: Compile Bicep runtime
         run: |
           az bicep install --version v0.45.15
-          az bicep build --file infra/main.bicep --stdout > /dev/null
+          az bicep build --file infra/main.bicep --outfile /tmp/runtime-template.json
+          cmp site/runtime-template.json /tmp/runtime-template.json
+
+      - name: Build runtime container
+        run: docker build --file Dockerfile.runtime --tag after-party-runtime:test .
 
       - name: Run shell script tests
         run: bash tests/shell-scripts.sh

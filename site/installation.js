@@ -1,12 +1,14 @@
 const CONSENT_STATE_KEY = 'after-party.admin-consent';
 const CONSENT_STATE_LIFETIME_MS = 10 * 60 * 1000;
 const MICROSOFT_GRAPH_APP_ID = '00000003-0000-0000-c000-000000000000';
+const AZURE_SERVICE_MANAGEMENT_APP_ID = '797f4846-ba00-4fd7-ba43-dac1f8f63013';
 const BENIGN_IDENTITY_SCOPES = new Set(['openid', 'profile', 'email', 'offline_access']);
 const RETRYABLE_VERIFICATION_CODES = new Set([
   'enterprise_app_missing',
   'graph_resource_invalid',
   'delegated_grant_missing',
   'delegated_grant_partial',
+  'azure_resource_invalid',
 ]);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -50,15 +52,28 @@ function normalizeConfiguration(configuration) {
   if (!displayName) {
     throw new InstallationError('configuration_invalid');
   }
+  const azureManagementAppId = requireUuid(
+    configuration?.azureManagementAppId,
+    'configuration_invalid',
+  );
+  const azureManagementScope = String(configuration?.azureManagementScope || '').trim();
+  if (
+    azureManagementAppId !== AZURE_SERVICE_MANAGEMENT_APP_ID ||
+    azureManagementScope !== 'user_impersonation'
+  ) {
+    throw new InstallationError('configuration_invalid');
+  }
   return {
     clientId: requireUuid(configuration?.clientId, 'configuration_invalid'),
-    developerTenantId: requireUuid(
-      configuration?.developerTenantId,
+    applicationHomeTenantId: requireUuid(
+      configuration?.applicationHomeTenantId,
       'configuration_invalid',
     ),
     displayName,
     redirectUri: requireRedirectUri(configuration?.redirectUri),
     scopes: [...new Set(scopes)],
+    azureManagementAppId,
+    azureManagementScope,
   };
 }
 
@@ -114,6 +129,7 @@ export function formatInstallationError(error) {
     enterprise_app_duplicate: 'More than one After Party enterprise application was found. Remove the unexpected duplicate before continuing.',
     enterprise_app_mismatch: 'The tenant enterprise application does not match the expected After Party identity.',
     graph_resource_invalid: 'Microsoft Graph could not be identified uniquely in this tenant.',
+    azure_resource_invalid: 'Azure Service Management could not be identified uniquely in this tenant.',
     delegated_grant_missing: 'The required After Party permissions were not granted. Ask a tenant administrator to approve them again.',
     delegated_grant_partial: 'Only some After Party permissions were granted. Ask a tenant administrator to approve the complete list.',
     application_grant_unexpected: 'Unexpected app-only access was found. Remove it before connecting this tenant.',
@@ -242,7 +258,7 @@ export function createTenantInstallation({
     const servicePrincipal = servicePrincipals.value[0];
     if (
       servicePrincipal.appId?.toLowerCase() !== expected.clientId ||
-      servicePrincipal.appOwnerOrganizationId?.toLowerCase() !== expected.developerTenantId ||
+      servicePrincipal.appOwnerOrganizationId?.toLowerCase() !== expected.applicationHomeTenantId ||
       servicePrincipal.servicePrincipalType !== 'Application' ||
       servicePrincipal.displayName !== expected.displayName ||
       !UUID_PATTERN.test(servicePrincipal.id)
@@ -267,6 +283,24 @@ export function createTenantInstallation({
       throw new InstallationError('graph_resource_invalid');
     }
     const graphPrincipalId = graphPrincipals.value[0].id;
+
+    const azurePrincipals = await graphRequest(
+      fetchGraph,
+      accessToken,
+      queryUrl('servicePrincipals', {
+        '$filter': `appId eq '${expected.azureManagementAppId}'`,
+        '$select': 'id,appId',
+      }),
+    );
+    if (
+      !Array.isArray(azurePrincipals.value) ||
+      azurePrincipals.value?.length !== 1 ||
+      azurePrincipals.value[0].appId?.toLowerCase() !== expected.azureManagementAppId ||
+      !UUID_PATTERN.test(azurePrincipals.value[0].id)
+    ) {
+      throw new InstallationError('azure_resource_invalid');
+    }
+    const azurePrincipalId = azurePrincipals.value[0].id;
 
     const grants = await graphRequest(
       fetchGraph,
@@ -297,6 +331,23 @@ export function createTenantInstallation({
     if ([...grantedScopes].some((scope) => !allowedScopes.has(scope))) {
       throw new InstallationError('delegated_grant_partial');
     }
+    const adminAzureGrants = (grants.value || []).filter(
+      (grant) =>
+        grant.clientId === servicePrincipal.id &&
+        grant.resourceId === azurePrincipalId &&
+        grant.consentType === 'AllPrincipals' &&
+        !grant.principalId,
+    );
+    if (adminAzureGrants.length !== 1) {
+      throw new InstallationError('delegated_grant_missing');
+    }
+    const grantedAzureScopes = scopeSet(adminAzureGrants[0].scope);
+    if (
+      grantedAzureScopes.size !== 1 ||
+      !grantedAzureScopes.has(expected.azureManagementScope)
+    ) {
+      throw new InstallationError('delegated_grant_partial');
+    }
 
     const appRoleAssignments = await graphRequest(
       fetchGraph,
@@ -316,7 +367,7 @@ export function createTenantInstallation({
       status: 'installed',
       tenantId: callback.tenantId,
       servicePrincipalId: servicePrincipal.id,
-      grantedScopes: expected.scopes,
+      grantedScopes: [...expected.scopes, expected.azureManagementScope],
     };
   }
 
@@ -348,5 +399,17 @@ export function createTenantInstallation({
     throw new InstallationError('graph_unavailable');
   }
 
-  return { begin, consumeCallback, verify };
+  async function verifyCurrent({ account, accessToken }) {
+    const tenantId = requireUuid(account?.tenantId, 'tenant_mismatch');
+    const accountId = String(account?.homeAccountId || '').trim();
+    if (!accountId || !accessToken) {
+      throw new InstallationError('token_unavailable');
+    }
+    return verifyOnce({
+      accessToken,
+      callback: { accountId, tenantId },
+    });
+  }
+
+  return { begin, consumeCallback, verify, verifyCurrent };
 }

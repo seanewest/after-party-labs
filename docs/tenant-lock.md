@@ -1,8 +1,8 @@
 # Tenant operation lock
 
 Every installed tenant has one lock for stateful operations. The lock is the blob
-`locks/tenant-operation.json` in the runtime's private `state` container. The SPA, GitHub Actions,
-local live testing, and future tenant jobs must all enter operations through
+`locks/tenant-operation.json` in the runtime's private `state` container. The published SPA,
+local SPA testing, and future tenant jobs must all enter operations through
 `runWithTenantLock`; callers must not create another coordination path.
 
 This contract is implemented and tested offline. Issue #26 owns the first deployment and live lock
@@ -37,7 +37,7 @@ The leased blob contains a small versioned record with only:
 
 - tenant ID;
 - operation ID and kind;
-- caller class (`spa`, `github-actions`, `local-spa`, or `tenant-job`);
+- caller class (`spa`, `local-spa`, or `tenant-job`);
 - exact source commit; and
 - acquisition, renewal, and expiration timestamps.
 

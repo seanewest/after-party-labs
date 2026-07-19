@@ -34,6 +34,29 @@ function successfulResponse(operation = 'runtime.status') {
   };
 }
 
+function successfulLockResponse(overrides = {}) {
+  return {
+    ok: true,
+    async json() {
+      return {
+        status: 'authorized',
+        operation: 'lock.test',
+        requestId,
+        tenantId,
+        runtimeId,
+        commit,
+        diagnostic: {
+          state: 'contention-confirmed',
+          owner: 'exclusive',
+          competitor: 'blocked',
+          recovery: 'released',
+          ...overrides,
+        },
+      };
+    },
+  };
+}
+
 test('the SPA sends one opaque runtime token and exact tenant/version request without retaining it', async () => {
   const calls = [];
   const client = createRuntimeApiClient({
@@ -80,8 +103,38 @@ test('wrong-tenant and stale responses are rejected even after HTTP success', as
   }
 });
 
+test('the lock card accepts only complete contention and recovery evidence', async () => {
+  const client = createRuntimeApiClient({
+    configuration: configuration(),
+    acquireAccessToken: async () => 'token',
+    fetchRuntime: async () => successfulLockResponse(),
+    randomUUID: () => requestId,
+  });
+  assert.deepEqual((await client.run('lock.test')).diagnostic, {
+    state: 'contention-confirmed',
+    owner: 'exclusive',
+    competitor: 'blocked',
+    recovery: 'released',
+  });
+
+  for (const incomplete of [
+    { competitor: 'admitted' },
+    { recovery: 'unknown' },
+    { state: 'exclusive-lock-confirmed' },
+  ]) {
+    const rejected = createRuntimeApiClient({
+      configuration: configuration(),
+      acquireAccessToken: async () => 'token',
+      fetchRuntime: async () => successfulLockResponse(incomplete),
+      randomUUID: () => requestId,
+    });
+    await assert.rejects(rejected.run('lock.test'), (error) => error.code === 'runtime_response_invalid');
+  }
+});
+
 test('unknown server errors and raw failures become fixed safe messages', async () => {
   const cases = [
+    [{ ok: false, json: async () => ({ code: 'lock_busy', owner: 'secret' }) }, 'lock_busy'],
     [{ ok: false, json: async () => ({ code: 'stale_runtime', message: 'raw details' }) }, 'stale_runtime'],
     [{ ok: false, json: async () => ({ code: 'sql_error', message: 'secret' }) }, 'runtime_unavailable'],
   ];
@@ -95,6 +148,10 @@ test('unknown server errors and raw failures become fixed safe messages', async 
     await assert.rejects(client.run('runtime.status'), (error) => error.code === code);
   }
 
+  assert.equal(
+    formatRuntimeApiError(new RuntimeApiError('lock_busy')),
+    'Another tenant-changing operation is already running. Wait for it to finish and try again.',
+  );
   assert.equal(
     formatRuntimeApiError(new RuntimeApiError('session_expired')),
     'Your After Party session expired. Sign in again.',

@@ -7,21 +7,24 @@ import {
 } from '../site/installation.js';
 
 const clientId = '11111111-1111-1111-1111-111111111111';
-const developerTenantId = '22222222-2222-2222-2222-222222222222';
+const applicationHomeTenantId = '22222222-2222-2222-2222-222222222222';
 const studentTenantId = '33333333-3333-3333-3333-333333333333';
 const nonce = '44444444-4444-4444-4444-444444444444';
 const servicePrincipalId = '55555555-5555-5555-5555-555555555555';
 const graphPrincipalId = '66666666-6666-6666-6666-666666666666';
+const azurePrincipalId = '77777777-7777-4777-8777-777777777777';
 const account = {
   homeAccountId: 'student-account',
   tenantId: studentTenantId,
 };
 const configuration = {
   clientId,
-  developerTenantId,
+  applicationHomeTenantId,
   displayName: 'After Party',
   redirectUri: 'https://example.test/after-party/',
   scopes: ['User.Read', 'Directory.ReadWrite.All'],
+  azureManagementAppId: '797f4846-ba00-4fd7-ba43-dac1f8f63013',
+  azureManagementScope: 'user_impersonation',
 };
 
 function response(body, status = 200) {
@@ -89,7 +92,7 @@ function successfulResponses(overrides = {}) {
   const servicePrincipal = {
     id: servicePrincipalId,
     appId: clientId,
-    appOwnerOrganizationId: developerTenantId,
+    appOwnerOrganizationId: applicationHomeTenantId,
     displayName: 'After Party',
     servicePrincipalType: 'Application',
     ...overrides.servicePrincipal,
@@ -97,6 +100,7 @@ function successfulResponses(overrides = {}) {
   return [
     response({ value: overrides.servicePrincipals ?? [servicePrincipal] }),
     response({ value: [{ id: graphPrincipalId, appId: '00000003-0000-0000-c000-000000000000' }] }),
+    response({ value: [{ id: azurePrincipalId, appId: configuration.azureManagementAppId }] }),
     response({
       value: overrides.grants ?? [
         {
@@ -105,6 +109,13 @@ function successfulResponses(overrides = {}) {
           principalId: null,
           resourceId: graphPrincipalId,
           scope: 'openid profile User.Read Directory.ReadWrite.All',
+        },
+        {
+          clientId: servicePrincipalId,
+          consentType: 'AllPrincipals',
+          principalId: null,
+          resourceId: azurePrincipalId,
+          scope: 'user_impersonation',
         },
       ],
     }),
@@ -188,9 +199,9 @@ test('verification requires the exact enterprise application and complete delega
     status: 'installed',
     tenantId: studentTenantId,
     servicePrincipalId,
-    grantedScopes: configuration.scopes,
+    grantedScopes: [...configuration.scopes, configuration.azureManagementScope],
   });
-  assert.equal(harness.requests.length, 4);
+  assert.equal(harness.requests.length, 5);
   assert.equal(
     new URL(harness.requests[0].url).searchParams.get('$filter'),
     `appId eq '${clientId}'`,
@@ -216,7 +227,7 @@ test('verification retries while the new enterprise application and grant propag
   });
 
   assert.equal(result.status, 'installed');
-  assert.equal(harness.requests.length, 5);
+  assert.equal(harness.requests.length, 6);
 });
 
 test('verification is idempotent for an existing correct installation', async () => {
@@ -231,7 +242,7 @@ test('verification is idempotent for an existing correct installation', async ()
 
   assert.equal((await harness.installation.verify(input)).status, 'installed');
   assert.equal((await harness.installation.verify(input)).status, 'installed');
-  assert.equal(harness.requests.length, 8);
+  assert.equal(harness.requests.length, 10);
 });
 
 test('verification rejects missing, duplicate, and mismatched enterprise applications', async () => {

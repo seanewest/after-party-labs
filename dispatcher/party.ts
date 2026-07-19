@@ -14,7 +14,8 @@ import {
   parseJsonLines,
   StructuredTurnOutcomeMonitor,
 } from "./turn-outcome.ts";
-import { AUTOMATED_TURN_REASON, DeliveryCoordinator } from "./worker-runner.ts";
+import { DeliveryCoordinator } from "./worker-runner.ts";
+import { FlockWorkerClientLock } from "./worker-lock.ts";
 
 interface ParsedArguments {
   options: Map<string, string | true>;
@@ -33,6 +34,7 @@ export async function runParty(argv = process.argv.slice(2)): Promise<number> {
   const queue = new DispatcherQueue(databasePath);
   const sessions = new WorkerSessionStore(databasePath);
   const terminal = new TmuxWorkerTerminal();
+  const workerClientLock = new FlockWorkerClientLock(databasePath);
   try {
     switch (command) {
       case "configure": {
@@ -58,20 +60,28 @@ export async function runParty(argv = process.argv.slice(2)): Promise<number> {
       case "agent": {
         const name = parseAgentName(requiredPositional(positionals, 0, "worker name"));
         const worker = sessions.requireWorker(name);
-        if (
-          !terminal.hasSession(name) &&
-          queue.getWorker(name).reason === AUTOMATED_TURN_REASON
-        ) {
+        const ownership = await workerClientLock.tryAcquire(name);
+        if (!ownership) {
           throw new Error(
-            `Worker ${name} is processing an automated turn; attach after it finishes.`,
+            `Worker ${name} already has an interactive or automated client.`,
           );
         }
-        terminal.start(worker);
-        terminal.attach(name);
+        try {
+          terminal.start(worker);
+          terminal.attach(name);
+        } finally {
+          await ownership.release();
+        }
         return 0;
       }
       case "deliver": {
-        const coordinator = coordinatorFor(parsed, queue, sessions, terminal);
+        const coordinator = coordinatorFor(
+          parsed,
+          queue,
+          sessions,
+          terminal,
+          workerClientLock,
+        );
         const result = await coordinator.deliverOnce();
         process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
         return result.outcome === "failed" ? 1 : 0;
@@ -97,7 +107,13 @@ export async function runParty(argv = process.argv.slice(2)): Promise<number> {
         return result.outcome === "escalated" ? 2 : 0;
       }
       case "run": {
-        const coordinator = coordinatorFor(parsed, queue, sessions, terminal);
+        const coordinator = coordinatorFor(
+          parsed,
+          queue,
+          sessions,
+          terminal,
+          workerClientLock,
+        );
         const interval = integerOption(parsed, "interval-ms") ?? 1_000;
         if (interval < 1) {
           throw new Error("--interval-ms must be positive.");
@@ -125,6 +141,7 @@ function coordinatorFor(
   queue: DispatcherQueue,
   sessions: WorkerSessionStore,
   terminal: TmuxWorkerTerminal,
+  workerClientLock: FlockWorkerClientLock,
 ): DeliveryCoordinator {
   return new DeliveryCoordinator(queue, sessions, terminal, {
     consumer: option(parsed, "consumer"),
@@ -133,6 +150,7 @@ function coordinatorFor(
     receiptTimeoutMs: integerOption(parsed, "receipt-timeout-ms"),
     pollMs: integerOption(parsed, "poll-ms"),
     turnOutcomeSource: new CodexExecTurnOutcomeSource(queue),
+    workerClientLock,
   });
 }
 

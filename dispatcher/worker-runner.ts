@@ -7,6 +7,10 @@ import type { AgentName } from "./registry.ts";
 import { WorkerSessionStore } from "./session-store.ts";
 import type { WorkerTerminal } from "./tmux-runner.ts";
 import type { TurnOutcomeSource } from "./turn-outcome.ts";
+import {
+  FlockWorkerClientLock,
+  type WorkerClientLock,
+} from "./worker-lock.ts";
 
 export interface DeliveryCoordinatorOptions {
   consumer?: string;
@@ -16,6 +20,7 @@ export interface DeliveryCoordinatorOptions {
   pollMs?: number;
   sleep?: (milliseconds: number) => Promise<void>;
   turnOutcomeSource?: TurnOutcomeSource;
+  workerClientLock?: WorkerClientLock;
 }
 
 export interface DeliveryResult {
@@ -46,6 +51,7 @@ export class DeliveryCoordinator {
   #pollMs: number;
   #sleep: (milliseconds: number) => Promise<void>;
   #turnOutcomeSource: TurnOutcomeSource | null;
+  #workerClientLock: WorkerClientLock;
 
   constructor(
     queue: DispatcherQueue,
@@ -63,13 +69,15 @@ export class DeliveryCoordinator {
     this.#pollMs = options.pollMs ?? 100;
     this.#sleep = options.sleep ?? delay;
     this.#turnOutcomeSource = options.turnOutcomeSource ?? null;
+    this.#workerClientLock =
+      options.workerClientLock ?? new FlockWorkerClientLock(queue.databasePath);
     requirePositiveInteger(this.#leaseMs, "lease duration");
     requireNonNegativeInteger(this.#startupTimeoutMs, "startup timeout");
     requireNonNegativeInteger(this.#receiptTimeoutMs, "receipt timeout");
     requirePositiveInteger(this.#pollMs, "poll interval");
   }
 
-  syncAvailability(): void {
+  async syncAvailability(): Promise<void> {
     this.queue.requeueExpiredLeases();
     for (const worker of this.sessions.listWorkers()) {
       let current = this.queue.getWorker(worker.name);
@@ -77,7 +85,11 @@ export class DeliveryCoordinator {
         current.reason === AUTOMATED_TURN_REASON &&
         !this.#hasActiveStructuredTurn(worker.name)
       ) {
-        current = this.queue.setWorkerAvailability(worker.name, "idle");
+        const recovered = await this.#workerClientLock.tryAcquire(worker.name);
+        if (recovered) {
+          current = this.queue.setWorkerAvailability(worker.name, "idle");
+          await recovered.release();
+        }
       }
       if (
         !existsSync(worker.worktreePath) ||
@@ -112,7 +124,7 @@ export class DeliveryCoordinator {
   }
 
   async deliverOnce(): Promise<DeliveryResult> {
-    this.syncAvailability();
+    await this.syncAvailability();
     const message = this.queue.claimNext({
       consumer: this.#consumer,
       leaseMs: this.#leaseMs,
@@ -126,36 +138,34 @@ export class DeliveryCoordinator {
       const worker = this.sessions.requireWorker(message.recipient);
       const prompt = formatHandoff(this.queue.inspect(message.id).message);
       if (this.#turnOutcomeSource) {
-        if (this.terminal.hasSession(worker.name)) {
-          if (this.terminal.hasAttachedClient(worker.name)) {
-            this.queue.setWorkerAvailability(worker.name, "busy", {
-              reason: ATTACHED_CLIENT_REASON,
-            });
-            return this.#defer(
-              message,
-              `Worker ${worker.name} is attached for interactive use.`,
-            );
-          }
-          this.queue.setWorkerAvailability(worker.name, "busy", {
-            reason: AUTOMATED_TURN_REASON,
-          });
-          if (this.terminal.hasAttachedClient(worker.name)) {
-            this.queue.setWorkerAvailability(worker.name, "busy", {
-              reason: ATTACHED_CLIENT_REASON,
-            });
-            return this.#defer(
-              message,
-              `Worker ${worker.name} became attached for interactive use.`,
-            );
-          }
-          this.terminal.stop(worker.name);
-        } else {
-          this.queue.setWorkerAvailability(worker.name, "busy", {
-            reason: AUTOMATED_TURN_REASON,
-          });
+        const ownership = await this.#workerClientLock.tryAcquire(worker.name);
+        if (!ownership) {
+          return this.#defer(
+            message,
+            `Worker ${worker.name} already has an interactive or automated client.`,
+          );
         }
-
         try {
+          if (this.terminal.hasSession(worker.name)) {
+            if (this.terminal.hasAttachedClient(worker.name)) {
+              this.queue.setWorkerAvailability(worker.name, "busy", {
+                reason: ATTACHED_CLIENT_REASON,
+              });
+              return this.#defer(
+                message,
+                `Worker ${worker.name} is attached for interactive use.`,
+              );
+            }
+            this.queue.setWorkerAvailability(worker.name, "busy", {
+              reason: AUTOMATED_TURN_REASON,
+            });
+            this.terminal.stop(worker.name);
+          } else {
+            this.queue.setWorkerAvailability(worker.name, "busy", {
+              reason: AUTOMATED_TURN_REASON,
+            });
+          }
+
           this.queue.beginDelivery(message.id, this.#consumer);
           const outcome = await this.#withLeaseRenewal(
             message.id,
@@ -172,6 +182,7 @@ export class DeliveryCoordinator {
           if (this.queue.getWorker(worker.name).reason === AUTOMATED_TURN_REASON) {
             this.queue.setWorkerAvailability(worker.name, "idle");
           }
+          await ownership.release();
         }
       }
 

@@ -114,3 +114,10 @@ export {
   type StructuredTurnResult,
   type TurnOutcomeSource,
 } from "./turn-outcome.ts";
+export {
+  FlockWorkerClientLock,
+  WorkerClientLockError,
+  type FlockWorkerClientLockOptions,
+  type WorkerClientLease,
+  type WorkerClientLock,
+} from "./worker-lock.ts";

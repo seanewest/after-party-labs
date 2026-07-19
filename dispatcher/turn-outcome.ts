@@ -201,7 +201,6 @@ export class StructuredTurnOutcomeMonitor {
         outcome: "completed",
         message: message.state === "completed" ? message : this.queue.complete(message.id),
       };
-      this.queue.setWorkerAvailability(message.recipient, "idle");
       return this.#finished;
     }
 
@@ -228,7 +227,6 @@ export class StructuredTurnOutcomeMonitor {
         workObserved: this.#workObserved,
       },
     });
-    this.queue.setWorkerAvailability(this.#reportedBy, "idle");
     this.#finished = {
       outcome: result.interruption.disposition,
       result,

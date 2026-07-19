@@ -17,6 +17,11 @@ import {
 } from "../dispatcher/tmux-runner.ts";
 import { StructuredTurnOutcomeMonitor } from "../dispatcher/turn-outcome.ts";
 import {
+  FlockWorkerClientLock,
+  type WorkerClientLease,
+  type WorkerClientLock,
+} from "../dispatcher/worker-lock.ts";
+import {
   ATTACHED_CLIENT_REASON,
   AUTOMATED_TURN_REASON,
   DeliveryCoordinator,
@@ -60,6 +65,7 @@ class FakeTerminal implements WorkerTerminal {
   readonly attachments: string[] = [];
   onStart?: (worker: WorkerSessionRecord) => void;
   onInject?: (name: string, prompt: string) => void;
+  onStop?: (name: string) => void;
 
   hasSession(name: string): boolean {
     return this.running.has(name);
@@ -78,6 +84,7 @@ class FakeTerminal implements WorkerTerminal {
   }
 
   stop(name: string): void {
+    this.onStop?.(name);
     if (this.running.delete(name)) {
       this.stops.push(name);
     }
@@ -90,6 +97,30 @@ class FakeTerminal implements WorkerTerminal {
   inject(name: string, prompt: string): void {
     this.injections.push({ name, prompt });
     this.onInject?.(name, prompt);
+  }
+}
+
+class FakeWorkerClientLock implements WorkerClientLock {
+  held = false;
+  acquisitions = 0;
+  releases = 0;
+
+  async tryAcquire(_name: string): Promise<WorkerClientLease | null> {
+    if (this.held) {
+      return null;
+    }
+    this.held = true;
+    this.acquisitions += 1;
+    let released = false;
+    return {
+      release: async () => {
+        if (!released) {
+          released = true;
+          this.held = false;
+          this.releases += 1;
+        }
+      },
+    };
   }
 }
 
@@ -296,6 +327,7 @@ test("structured delivery resumes a sleeping worker and completes from its event
     });
 
     const terminal = new FakeTerminal();
+    const workerClientLock = new FakeWorkerClientLock();
     const coordinator = new DeliveryCoordinator(
       state.queue,
       state.sessions,
@@ -327,6 +359,7 @@ test("structured delivery resumes a sleeping worker and completes from its event
             return outcome;
           },
         },
+        workerClientLock,
       },
     );
     const result = await coordinator.deliverOnce();
@@ -367,6 +400,7 @@ test("structured delivery stops a detached TUI and never competes with an attach
       payload: { text: "Wait for the human to detach." },
     });
     const terminal = new FakeTerminal();
+    const workerClientLock = new FakeWorkerClientLock();
     terminal.running.add("cornholio");
     terminal.attached.add("cornholio");
     let sourceCalls = 0;
@@ -383,6 +417,7 @@ test("structured delivery stops a detached TUI and never competes with an attach
           return { outcome: "completed", message: state.queue.complete(accepted.id) };
         },
       },
+      workerClientLock,
     });
 
     assert.equal((await coordinator.deliverOnce()).outcome, "empty");
@@ -391,10 +426,15 @@ test("structured delivery stops a detached TUI and never competes with an attach
     assert.equal(sourceCalls, 0);
 
     terminal.attached.delete("cornholio");
+    let attachDuringStop: Promise<WorkerClientLease | null> | null = null;
+    terminal.onStop = () => {
+      attachDuringStop = workerClientLock.tryAcquire("cornholio");
+    };
     const delivered = await coordinator.deliverOnce();
     assert.equal(delivered.outcome, "completed");
     assert.deepEqual(terminal.stops, ["cornholio"]);
     assert.equal(sourceCalls, 1);
+    assert.equal(await attachDuringStop, null);
     assert.equal(state.queue.getWorker("cornholio").availability, "idle");
     assert.equal(state.queue.getWorker("cornholio").reason, null);
   } finally {
@@ -402,7 +442,7 @@ test("structured delivery stops a detached TUI and never competes with an attach
   }
 });
 
-test("an expired automated owner is cleared only after its durable turn is no longer active", () => {
+test("an expired automated owner is cleared only after its durable turn is no longer active", async () => {
   const state = fixture();
   try {
     state.sessions.configureWorker("cornholio", state.worktree);
@@ -427,16 +467,102 @@ test("an expired automated owner is cleared only after its durable turn is no lo
             throw new Error("not called");
           },
         },
+        workerClientLock: new FakeWorkerClientLock(),
       },
     );
 
-    coordinator.syncAvailability();
+    await coordinator.syncAvailability();
     assert.equal(state.queue.getWorker("cornholio").availability, "busy");
     state.tick();
-    coordinator.syncAvailability();
+    await coordinator.syncAvailability();
     assert.equal(state.queue.getMessage(message.id)?.state, "queued");
     assert.equal(state.queue.getWorker("cornholio").availability, "idle");
     assert.equal(state.queue.getWorker("cornholio").reason, null);
+  } finally {
+    state.cleanup();
+  }
+});
+
+test("automated ownership remains locked after a terminal event until the source closes", async () => {
+  const state = fixture();
+  try {
+    state.sessions.configureWorker("cornholio", state.worktree);
+    state.queue.setWorkerAvailability("cornholio", "idle");
+    const message = state.queue.enqueue({
+      sender: "morpheus",
+      recipient: "cornholio",
+      payload: { text: "Keep ownership through process close." },
+    });
+    const workerClientLock = new FakeWorkerClientLock();
+    let terminalObserved!: () => void;
+    const terminalEvent = new Promise<void>((resolve) => {
+      terminalObserved = resolve;
+    });
+    let closeSource!: () => void;
+    const sourceClose = new Promise<void>((resolve) => {
+      closeSource = resolve;
+    });
+    const coordinator = new DeliveryCoordinator(
+      state.queue,
+      state.sessions,
+      new FakeTerminal(),
+      {
+        consumer: "runner",
+        leaseMs: 500,
+        pollMs: 1,
+        workerClientLock,
+        turnOutcomeSource: {
+          async waitForOutcome(accepted) {
+            state.queue.recordReceipt(accepted.id, "cornholio", {
+              turnId: "terminal-before-close",
+            });
+            const outcome = new StructuredTurnOutcomeMonitor(state.queue, {
+              messageId: accepted.id,
+              attemptNumber: accepted.attemptCount,
+              reportedBy: accepted.recipient,
+              streamId: "terminal-before-close",
+            }).consume({
+              type: "turn.completed",
+              turn_id: "terminal-before-close",
+            });
+            assert.ok(outcome);
+            terminalObserved();
+            await sourceClose;
+            return outcome;
+          },
+        },
+      },
+    );
+
+    const delivery = coordinator.deliverOnce();
+    await terminalEvent;
+    assert.equal(state.queue.getMessage(message.id)?.state, "completed");
+    assert.equal(state.queue.getWorker("cornholio").reason, AUTOMATED_TURN_REASON);
+    assert.equal(await workerClientLock.tryAcquire("cornholio"), null);
+
+    closeSource();
+    assert.equal((await delivery).outcome, "completed");
+    const interactive = await workerClientLock.tryAcquire("cornholio");
+    assert.ok(interactive);
+    await interactive.release();
+  } finally {
+    state.cleanup();
+  }
+});
+
+test("the filesystem worker lock serializes independent party processes", async () => {
+  const state = fixture();
+  try {
+    const firstLock = new FlockWorkerClientLock(state.queue.databasePath);
+    const secondLock = new FlockWorkerClientLock(state.queue.databasePath);
+    const first = await firstLock.tryAcquire("cornholio");
+    assert.ok(first);
+    assert.equal(await secondLock.tryAcquire("cornholio"), null);
+    await first.release();
+
+    const second = await secondLock.tryAcquire("cornholio");
+    assert.ok(second);
+    await second.release();
   } finally {
     state.cleanup();
   }

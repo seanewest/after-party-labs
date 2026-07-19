@@ -23,6 +23,13 @@ delivery wait, while a detached idle TUI is stopped before structured delivery b
 turn, `party agent NAME` refuses to start a competing TUI. Attaching after delivery resumes the saved
 session, including the queued turn, in the normal interactive interface.
 
+`party agent`, `party deliver`, and `party run` serialize that ownership with the same per-worker
+filesystem lock next to the dispatcher database. The lock is held for the complete interactive
+attachment or until the structured Codex child has fully exited; queue availability and tmux client
+checks are status signals, not the ownership primitive. A crashed owner releases the OS lock when
+its file descriptors close, and the next runner reconciles stale automated status. This WSL runner
+requires the standard `flock` command.
+
 Machine-specific worktree paths, Codex session IDs, and activity state live in
 `${XDG_STATE_HOME:-~/.local/state}/after-party/dispatcher.sqlite`, never in Git.
 

@@ -4,7 +4,9 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import vm from 'node:vm';
 
 import { buildPages } from '../scripts/build-pages.mjs';
 import { createStaticServer, resolveSourceIdentity } from '../scripts/serve-pages.mjs';
@@ -16,6 +18,71 @@ async function temporaryDirectory(t) {
   t.after(() => rm(directory, { recursive: true, force: true }));
   return directory;
 }
+
+test('the public app configuration contains only the reviewed SPA contract', async (t) => {
+  const source = await readFile(new URL('../site/app-config.js', import.meta.url), 'utf8');
+  const createScript = await readFile(
+    new URL('../scripts/create-multitenant-app.sh', import.meta.url),
+    'utf8',
+  );
+  const context = { location: { origin: 'http://127.0.0.1:4173' } };
+  vm.runInNewContext(source, context);
+  const config = JSON.parse(JSON.stringify(context.afterPartyConfig));
+
+  assert.deepEqual(config, {
+    authentication: {
+      clientId: '9edaa951-658e-4be2-9623-ee906cb604b2',
+      authority: 'https://login.microsoftonline.com/organizations',
+      redirectUri: 'http://127.0.0.1:4173/',
+    },
+    redirectUris: {
+      production: 'https://seanewest.github.io/after-party-labs/',
+      local: 'http://127.0.0.1:4173/',
+    },
+    microsoftGraphDelegatedScopes: [
+      'User.Read',
+      'Directory.ReadWrite.All',
+      'Application.ReadWrite.All',
+      'Group.ReadWrite.All',
+      'User.ReadWrite.All',
+      'RoleManagement.ReadWrite.Directory',
+      'Policy.ReadWrite.ConditionalAccess',
+      'AuditLog.Read.All',
+      'Reports.Read.All',
+      'Mail.ReadWrite',
+      'Mail.Send',
+      'Files.ReadWrite.All',
+      'Sites.ReadWrite.All',
+      'SecurityEvents.ReadWrite.All',
+    ],
+  });
+
+  const serialized = JSON.stringify(config).toLowerCase();
+  for (const forbiddenName of ['clientsecret', 'password', 'privatekey', 'certificate']) {
+    assert.equal(serialized.includes(forbiddenName), false);
+  }
+  for (const scope of config.microsoftGraphDelegatedScopes) {
+    assert.equal(createScript.includes(`'${scope}'`), true);
+  }
+
+  const productionContext = {
+    location: { origin: 'https://seanewest.github.io' },
+  };
+  vm.runInNewContext(source, productionContext);
+  assert.equal(
+    productionContext.afterPartyConfig.authentication.redirectUri,
+    'https://seanewest.github.io/after-party-labs/',
+  );
+
+  const output = await temporaryDirectory(t);
+  await buildPages({
+    source: fileURLToPath(new URL('../site', import.meta.url)),
+    output,
+    commit: 'config-test',
+    basePath: '/after-party-labs/',
+  });
+  assert.equal(await readFile(path.join(output, 'app-config.js'), 'utf8'), source);
+});
 
 test('buildPages stamps the exact commit and base path', async (t) => {
   const root = await temporaryDirectory(t);

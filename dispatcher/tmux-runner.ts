@@ -17,7 +17,9 @@ export type CommandExecutor = (
 
 export interface WorkerTerminal {
   hasSession(name: string): boolean;
+  hasAttachedClient(name: string): boolean;
   start(worker: WorkerSessionRecord): void;
+  stop(name: string): void;
   attach(name: string): void;
   inject(name: string, prompt: string): void;
 }
@@ -27,6 +29,8 @@ export interface TmuxWorkerTerminalOptions {
   tmuxCommand?: string;
   tmuxArgsPrefix?: string[];
   codexCommand?: string;
+  submitDelayMs?: number;
+  pause?: (milliseconds: number) => void;
 }
 
 export class TerminalRunnerError extends Error {}
@@ -36,12 +40,19 @@ export class TmuxWorkerTerminal implements WorkerTerminal {
   #tmuxCommand: string;
   #tmuxArgsPrefix: string[];
   #codexCommand: string;
+  #submitDelayMs: number;
+  #pause: (milliseconds: number) => void;
 
   constructor(options: TmuxWorkerTerminalOptions = {}) {
     this.#execute = options.execute ?? executeCommand;
     this.#tmuxCommand = options.tmuxCommand ?? "tmux";
     this.#tmuxArgsPrefix = options.tmuxArgsPrefix ?? [];
     this.#codexCommand = options.codexCommand ?? "codex";
+    this.#submitDelayMs = options.submitDelayMs ?? 100;
+    this.#pause = options.pause ?? pauseThread;
+    if (!Number.isSafeInteger(this.#submitDelayMs) || this.#submitDelayMs < 0) {
+      throw new TerminalRunnerError("Submit delay must be a non-negative integer.");
+    }
   }
 
   sessionName(name: string): string {
@@ -58,6 +69,25 @@ export class TmuxWorkerTerminal implements WorkerTerminal {
       throw new TerminalRunnerError(`${this.#tmuxCommand} is not installed.`);
     }
     return result.status === 0;
+  }
+
+  hasAttachedClient(name: string): boolean {
+    const result = this.#execute(
+      this.#tmuxCommand,
+      [
+        ...this.#tmuxArgsPrefix,
+        "list-clients",
+        "-t",
+        `=${this.sessionName(name)}`,
+        "-F",
+        "#{client_name}",
+      ],
+      commandOptions(),
+    );
+    if (result.error && (result.error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new TerminalRunnerError(`${this.#tmuxCommand} is not installed.`);
+    }
+    return result.status === 0 && result.stdout.trim().length > 0;
   }
 
   start(worker: WorkerSessionRecord): void {
@@ -79,6 +109,16 @@ export class TmuxWorkerTerminal implements WorkerTerminal {
         `exec ${codex.map(shellQuote).join(" ")}`,
       ],
       `start worker ${worker.name}`,
+    );
+  }
+
+  stop(name: string): void {
+    if (!this.hasSession(name)) {
+      return;
+    }
+    this.#checked(
+      [...this.#tmuxArgsPrefix, "kill-session", "-t", `=${this.sessionName(name)}`],
+      `stop worker ${name}`,
     );
   }
 
@@ -105,6 +145,7 @@ export class TmuxWorkerTerminal implements WorkerTerminal {
       [...this.#tmuxArgsPrefix, "paste-buffer", "-d", "-b", buffer, "-t", `=${session}:0.0`],
       `paste handoff for ${name}`,
     );
+    this.#pause(this.#submitDelayMs);
     this.#checked(
       [...this.#tmuxArgsPrefix, "send-keys", "-t", `=${session}:0.0`, "Enter"],
       `submit handoff for ${name}`,
@@ -151,4 +192,8 @@ function commandOptions(input?: string): SpawnSyncOptionsWithStringEncoding {
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+function pauseThread(milliseconds: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
 }

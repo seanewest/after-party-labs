@@ -18,7 +18,10 @@ and steering.
 
 `npm run party -- deliver` processes one ready handoff. `npm run party -- run` keeps processing, and
 `npm run party -- run --once` provides a one-cycle automation check. Busy workers are excluded from
-claims; workers without a tmux session are marked asleep and woken before delivery.
+claims. One Codex client owns a worker session at a time: an attached interactive TUI makes queued
+delivery wait, while a detached idle TUI is stopped before structured delivery begins. During that
+turn, `party agent NAME` refuses to start a competing TUI. Attaching after delivery resumes the saved
+session, including the queued turn, in the normal interactive interface.
 
 Machine-specific worktree paths, Codex session IDs, and activity state live in
 `${XDG_STATE_HOME:-~/.local/state}/after-party/dispatcher.sqlite`, never in Git.
@@ -37,12 +40,13 @@ queue and records its durable receipt before processing. A retained receipt bloc
 does not block a new attempt explicitly authorized by a `retry_safe` interruption. `Stop` only
 records lifecycle state; it never infers successful model work.
 
-Normal `party deliver` and `party run` handoffs resume the worker through `codex exec --json` and
-feed that complete event stream directly to `StructuredTurnOutcomeMonitor`. If the worker has no
-saved session yet, the runner starts a new structured Codex session in its configured worktree.
+Normal `party deliver` and `party run` handoffs become the worker's sole Codex client, resume the
+worker through `codex exec --json`, and feed that complete event stream directly to
+`StructuredTurnOutcomeMonitor`. If the worker has no saved session yet, the runner starts a new
+structured Codex session in its configured worktree.
 This path inherits the user's normal Codex configuration and does not bypass sandbox, approval, or
 hook trust. `party agent NAME` remains the interactive tmux/TUI path for direct human prompts,
-screenshot paste, and steering.
+screenshot paste, and steering; automation waits while that TUI is attached.
 
 For diagnostics, structured Codex JSONL can also be consumed manually from stdin with:
 
@@ -121,7 +125,9 @@ The default database is `${XDG_STATE_HOME:-~/.local/state}/after-party/dispatche
 
 Run `npm run party -- help` for worker commands, `npm run party:queue -- help` for direct queue
 inspection, `npm run check:types` for static checks, and `npm run test:dispatcher` for the offline
-suite plus an auto-skipped local Codex/tmux smoke test when those tools are unavailable.
+suite. `npm run test:dispatcher:real` is an explicit local smoke using the installed authenticated
+Codex CLI; it makes real model calls to verify TUI delivery, sole-client automated resume, and later
+interactive steering, so normal CI does not run it.
 
 ## GitHub feedback polling
 

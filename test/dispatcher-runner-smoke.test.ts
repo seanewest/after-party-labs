@@ -13,7 +13,7 @@ const hasLocalTools =
   spawnSync("codex", ["resume", "--help"], { encoding: "utf8" }).status === 0;
 
 test(
-  "local Codex and isolated tmux smoke covers saved-session resume and prompt injection",
+  "isolated tmux adapter smoke covers saved-session resume, ownership, and prompt injection",
   { skip: !hasLocalTools },
   async () => {
     const directory = mkdtempSync(join(tmpdir(), "after-party-tmux-smoke-"));
@@ -56,12 +56,14 @@ setInterval(() => {}, 1000);
     try {
       terminal.start(worker);
       assert.equal(terminal.hasSession("cornholio"), true);
+      assert.equal(terminal.hasAttachedClient("cornholio"), false);
       terminal.inject("cornholio", "[AFTER_PARTY_HANDOFF_V1:test]\nsmoke prompt");
       const log = await waitForLog(logPath, "smoke prompt", 2_000);
       assert.match(log, /"resume","33333333-3333-4333-8333-333333333333","-C"/);
       assert.match(log, /smoke prompt/);
 
-      spawnSync("tmux", ["-L", socket, "kill-server"], { encoding: "utf8" });
+      terminal.stop("cornholio");
+      assert.equal(terminal.hasSession("cornholio"), false);
       writeFileSync(logPath, "", "utf8");
       terminal.start(worker);
       const resumed = await waitForLog(logPath, SESSION_ID_FRAGMENT, 2_000);

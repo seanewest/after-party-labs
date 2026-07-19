@@ -30,6 +30,11 @@ export interface DeliveryResult {
   error?: string;
 }
 
+export const ATTACHED_CLIENT_REASON =
+  "The interactive Codex client is attached; automated delivery is waiting.";
+export const AUTOMATED_TURN_REASON =
+  "An automated structured Codex turn owns this worker session.";
+
 export class DeliveryCoordinator {
   private readonly queue: DispatcherQueue;
   private readonly sessions: WorkerSessionStore;
@@ -65,7 +70,15 @@ export class DeliveryCoordinator {
   }
 
   syncAvailability(): void {
+    this.queue.requeueExpiredLeases();
     for (const worker of this.sessions.listWorkers()) {
+      let current = this.queue.getWorker(worker.name);
+      if (
+        current.reason === AUTOMATED_TURN_REASON &&
+        !this.#hasActiveStructuredTurn(worker.name)
+      ) {
+        current = this.queue.setWorkerAvailability(worker.name, "idle");
+      }
       if (
         !existsSync(worker.worktreePath) ||
         !existsSync(join(worker.worktreePath, ".git"))
@@ -73,10 +86,29 @@ export class DeliveryCoordinator {
         this.queue.setWorkerAvailability(worker.name, "unavailable", {
           reason: `Configured worktree ${worker.worktreePath} is missing.`,
         });
+      } else if (this.#turnOutcomeSource && this.terminal.hasSession(worker.name)) {
+        if (this.terminal.hasAttachedClient(worker.name)) {
+          if (current.availability !== "busy" || current.reason === ATTACHED_CLIENT_REASON) {
+            this.queue.setWorkerAvailability(worker.name, "busy", {
+              reason: ATTACHED_CLIENT_REASON,
+            });
+          }
+        } else if (current.reason === ATTACHED_CLIENT_REASON) {
+          this.queue.setWorkerAvailability(worker.name, "idle");
+        }
+      } else if (this.#turnOutcomeSource && current.reason === ATTACHED_CLIENT_REASON) {
+        this.queue.setWorkerAvailability(worker.name, "idle");
       } else if (!this.#turnOutcomeSource && !this.terminal.hasSession(worker.name)) {
         this.queue.setWorkerAvailability(worker.name, "asleep");
       }
     }
+  }
+
+  #hasActiveStructuredTurn(name: AgentName): boolean {
+    return (["leased", "delivering", "receipted", "acknowledged"] as const).some(
+      (state) =>
+        this.queue.listMessages({ state, recipient: name, limit: 1 }).length > 0,
+    );
   }
 
   async deliverOnce(): Promise<DeliveryResult> {
@@ -94,18 +126,53 @@ export class DeliveryCoordinator {
       const worker = this.sessions.requireWorker(message.recipient);
       const prompt = formatHandoff(this.queue.inspect(message.id).message);
       if (this.#turnOutcomeSource) {
-        this.queue.beginDelivery(message.id, this.#consumer);
-        const outcome = await this.#withLeaseRenewal(
-          message.id,
-          this.#turnOutcomeSource.waitForOutcome(message, worker, prompt),
-        );
-        if (outcome.outcome === "completed") {
-          return { outcome: "completed", message: outcome.message };
+        if (this.terminal.hasSession(worker.name)) {
+          if (this.terminal.hasAttachedClient(worker.name)) {
+            this.queue.setWorkerAvailability(worker.name, "busy", {
+              reason: ATTACHED_CLIENT_REASON,
+            });
+            return this.#defer(
+              message,
+              `Worker ${worker.name} is attached for interactive use.`,
+            );
+          }
+          this.queue.setWorkerAvailability(worker.name, "busy", {
+            reason: AUTOMATED_TURN_REASON,
+          });
+          if (this.terminal.hasAttachedClient(worker.name)) {
+            this.queue.setWorkerAvailability(worker.name, "busy", {
+              reason: ATTACHED_CLIENT_REASON,
+            });
+            return this.#defer(
+              message,
+              `Worker ${worker.name} became attached for interactive use.`,
+            );
+          }
+          this.terminal.stop(worker.name);
+        } else {
+          this.queue.setWorkerAvailability(worker.name, "busy", {
+            reason: AUTOMATED_TURN_REASON,
+          });
         }
-        if (outcome.outcome === "retry_safe") {
-          return { outcome: "retry_safe", message: outcome.result.message };
+
+        try {
+          this.queue.beginDelivery(message.id, this.#consumer);
+          const outcome = await this.#withLeaseRenewal(
+            message.id,
+            this.#turnOutcomeSource.waitForOutcome(message, worker, prompt),
+          );
+          if (outcome.outcome === "completed") {
+            return { outcome: "completed", message: outcome.message };
+          }
+          if (outcome.outcome === "retry_safe") {
+            return { outcome: "retry_safe", message: outcome.result.message };
+          }
+          return { outcome: "failed", message: outcome.result.message };
+        } finally {
+          if (this.queue.getWorker(worker.name).reason === AUTOMATED_TURN_REASON) {
+            this.queue.setWorkerAvailability(worker.name, "idle");
+          }
         }
-        return { outcome: "failed", message: outcome.result.message };
       }
 
       this.terminal.start(worker);

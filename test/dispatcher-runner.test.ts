@@ -16,7 +16,11 @@ import {
   type WorkerTerminal,
 } from "../dispatcher/tmux-runner.ts";
 import { StructuredTurnOutcomeMonitor } from "../dispatcher/turn-outcome.ts";
-import { DeliveryCoordinator } from "../dispatcher/worker-runner.ts";
+import {
+  ATTACHED_CLIENT_REASON,
+  AUTOMATED_TURN_REASON,
+  DeliveryCoordinator,
+} from "../dispatcher/worker-runner.ts";
 
 const SESSION_A = "11111111-1111-4111-8111-111111111111";
 const SESSION_B = "22222222-2222-4222-8222-222222222222";
@@ -49,7 +53,9 @@ function fixture() {
 
 class FakeTerminal implements WorkerTerminal {
   readonly running = new Set<string>();
+  readonly attached = new Set<string>();
   readonly starts: WorkerSessionRecord[] = [];
+  readonly stops: string[] = [];
   readonly injections: Array<{ name: string; prompt: string }> = [];
   readonly attachments: string[] = [];
   onStart?: (worker: WorkerSessionRecord) => void;
@@ -59,11 +65,21 @@ class FakeTerminal implements WorkerTerminal {
     return this.running.has(name);
   }
 
+  hasAttachedClient(name: string): boolean {
+    return this.attached.has(name);
+  }
+
   start(worker: WorkerSessionRecord): void {
     if (!this.running.has(worker.name)) {
       this.running.add(worker.name);
       this.starts.push(worker);
       this.onStart?.(worker);
+    }
+  }
+
+  stop(name: string): void {
+    if (this.running.delete(name)) {
+      this.stops.push(name);
     }
   }
 
@@ -333,6 +349,99 @@ test("structured delivery resumes a sleeping worker and completes from its event
   }
 });
 
+test("structured delivery stops a detached TUI and never competes with an attached TUI", async () => {
+  const state = fixture();
+  try {
+    state.sessions.configureWorker("cornholio", state.worktree);
+    new LifecycleHandler(state.queue, state.sessions, state.now).handle({
+      hook_event_name: "SessionStart",
+      session_id: SESSION_B,
+      transcript_path: join(state.directory, "transcript.jsonl"),
+      cwd: state.worktree,
+      source: "startup",
+    });
+    state.queue.setWorkerAvailability("cornholio", "idle");
+    const waiting = state.queue.enqueue({
+      sender: "morpheus",
+      recipient: "cornholio",
+      payload: { text: "Wait for the human to detach." },
+    });
+    const terminal = new FakeTerminal();
+    terminal.running.add("cornholio");
+    terminal.attached.add("cornholio");
+    let sourceCalls = 0;
+    const coordinator = new DeliveryCoordinator(state.queue, state.sessions, terminal, {
+      consumer: "runner",
+      leaseMs: 500,
+      pollMs: 1,
+      turnOutcomeSource: {
+        async waitForOutcome(accepted) {
+          sourceCalls += 1;
+          assert.equal(terminal.hasSession("cornholio"), false);
+          state.queue.recordReceipt(accepted.id, "cornholio", { turnId: "turn-owned" });
+          state.queue.acknowledge(accepted.id);
+          return { outcome: "completed", message: state.queue.complete(accepted.id) };
+        },
+      },
+    });
+
+    assert.equal((await coordinator.deliverOnce()).outcome, "empty");
+    assert.equal(state.queue.getMessage(waiting.id)?.state, "queued");
+    assert.equal(state.queue.getWorker("cornholio").reason, ATTACHED_CLIENT_REASON);
+    assert.equal(sourceCalls, 0);
+
+    terminal.attached.delete("cornholio");
+    const delivered = await coordinator.deliverOnce();
+    assert.equal(delivered.outcome, "completed");
+    assert.deepEqual(terminal.stops, ["cornholio"]);
+    assert.equal(sourceCalls, 1);
+    assert.equal(state.queue.getWorker("cornholio").availability, "idle");
+    assert.equal(state.queue.getWorker("cornholio").reason, null);
+  } finally {
+    state.cleanup();
+  }
+});
+
+test("an expired automated owner is cleared only after its durable turn is no longer active", () => {
+  const state = fixture();
+  try {
+    state.sessions.configureWorker("cornholio", state.worktree);
+    state.queue.setWorkerAvailability("cornholio", "idle");
+    const message = state.queue.enqueue({
+      sender: "morpheus",
+      recipient: "cornholio",
+      payload: { text: "Recover after a runner crash." },
+    });
+    state.queue.claimNext({ consumer: "crashed-runner", leaseMs: 1 });
+    state.queue.beginDelivery(message.id, "crashed-runner");
+    state.queue.setWorkerAvailability("cornholio", "busy", {
+      reason: AUTOMATED_TURN_REASON,
+    });
+    const coordinator = new DeliveryCoordinator(
+      state.queue,
+      state.sessions,
+      new FakeTerminal(),
+      {
+        turnOutcomeSource: {
+          async waitForOutcome() {
+            throw new Error("not called");
+          },
+        },
+      },
+    );
+
+    coordinator.syncAvailability();
+    assert.equal(state.queue.getWorker("cornholio").availability, "busy");
+    state.tick();
+    coordinator.syncAvailability();
+    assert.equal(state.queue.getMessage(message.id)?.state, "queued");
+    assert.equal(state.queue.getWorker("cornholio").availability, "idle");
+    assert.equal(state.queue.getWorker("cornholio").reason, null);
+  } finally {
+    state.cleanup();
+  }
+});
+
 test("structured outcomes retry only pre-work transient failures and escalate after work", () => {
   const state = fixture();
   try {
@@ -476,12 +585,22 @@ test("tmux adapter hides start, resume, attach, and paste mechanics behind worke
     if (args.includes("has-session")) {
       return { status: exists ? 0 : 1, stdout: "", stderr: "" };
     }
+    if (args.includes("list-clients")) {
+      return { status: 0, stdout: "client-1\n", stderr: "" };
+    }
     if (args.includes("new-session")) {
       exists = true;
     }
+    if (args.includes("kill-session")) {
+      exists = false;
+    }
     return { status: 0, stdout: "", stderr: "" };
   };
-  const terminal = new TmuxWorkerTerminal({ execute });
+  const pauses: number[] = [];
+  const terminal = new TmuxWorkerTerminal({
+    execute,
+    pause: (milliseconds) => pauses.push(milliseconds),
+  });
   const worker: WorkerSessionRecord = {
     name: "beavis",
     worktreePath: "/tmp/work tree",
@@ -495,8 +614,10 @@ test("tmux adapter hides start, resume, attach, and paste mechanics behind worke
     updatedAt: 1,
   };
   terminal.start(worker);
+  assert.equal(terminal.hasAttachedClient("beavis"), true);
   terminal.inject("beavis", "prompt with\nmultiple lines");
   terminal.attach("beavis");
+  terminal.stop("beavis");
 
   const start = calls.find((call) => call.args.includes("new-session"));
   assert.match(start?.args.at(-1) ?? "", /codex.*resume.*11111111/);
@@ -508,6 +629,8 @@ test("tmux adapter hides start, resume, attach, and paste mechanics behind worke
   assert.ok(calls.some((call) => call.args.includes("paste-buffer")));
   assert.ok(calls.some((call) => call.args.includes("send-keys")));
   assert.ok(calls.some((call) => call.args.includes("attach-session")));
+  assert.ok(calls.some((call) => call.args.includes("kill-session")));
+  assert.deepEqual(pauses, [100]);
 });
 
 test("the party CLI configures named worktrees without storing them in Git", () => {

@@ -14,7 +14,7 @@ import {
   parseJsonLines,
   StructuredTurnOutcomeMonitor,
 } from "./turn-outcome.ts";
-import { DeliveryCoordinator } from "./worker-runner.ts";
+import { AUTOMATED_TURN_REASON, DeliveryCoordinator } from "./worker-runner.ts";
 
 interface ParsedArguments {
   options: Map<string, string | true>;
@@ -58,6 +58,14 @@ export async function runParty(argv = process.argv.slice(2)): Promise<number> {
       case "agent": {
         const name = parseAgentName(requiredPositional(positionals, 0, "worker name"));
         const worker = sessions.requireWorker(name);
+        if (
+          !terminal.hasSession(name) &&
+          queue.getWorker(name).reason === AUTOMATED_TURN_REASON
+        ) {
+          throw new Error(
+            `Worker ${name} is processing an automated turn; attach after it finishes.`,
+          );
+        }
         terminal.start(worker);
         terminal.attach(name);
         return 0;
@@ -223,8 +231,9 @@ Global options:
   --database PATH   Override PARTY_DISPATCHER_DB and the default state path.
 
 "party agent NAME" hides tmux while preserving the normal interactive Codex TUI.
-Queued deliver/run work resumes the same saved session through structured Codex JSON
-events. Closing or detaching the interactive terminal leaves its tmux session running.
+Queued deliver/run work waits for an attached TUI, then resumes the same saved session
+as its sole client through structured Codex JSON events. The next agent attach resumes
+that session with the queued turn visible.
 `;
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

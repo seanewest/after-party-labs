@@ -75,7 +75,36 @@ case "${1:-}:${2:-}:${3:-}" in
     if [[ " $* " == *' --display-name '* ]]; then
       printf '%s\n' "${AZ_MOCK_EXISTING_COUNT:-0}"
     elif [[ " $* " == *' --app-id '* ]]; then
-      printf '%s\n' "${AZ_MOCK_REMAINING_COUNT:-0}"
+      case "$query" in
+        'length(@)')
+          if [[ -n "${AZ_MOCK_APP_REGISTRATION_COUNT+x}" ]]; then
+            if [[ "${AZ_MOCK_APP_DISAPPEARS_AFTER_SP_DELETE:-0}" == '1' ]] &&
+               grep -F 'ad sp delete --id' "$AZ_MOCK_LOG" >/dev/null; then
+              printf '0\n'
+            else
+              printf '%s\n' "$AZ_MOCK_APP_REGISTRATION_COUNT"
+            fi
+          else
+            printf '%s\n' "${AZ_MOCK_REMAINING_COUNT:-0}"
+          fi
+          ;;
+        '[0].id')
+          printf '%s\n' "${AZ_MOCK_OBJECT_ID:-44444444-4444-4444-4444-444444444444}"
+          ;;
+        '[0].appId')
+          printf '%s\n' "${AZ_MOCK_APP_ID:-11111111-1111-1111-1111-111111111111}"
+          ;;
+        '[0].displayName')
+          printf '%s\n' "${AZ_MOCK_DISPLAY_NAME:-After Party}"
+          ;;
+        '[0].signInAudience')
+          printf '%s\n' "${AZ_MOCK_SIGN_IN_AUDIENCE:-AzureADMultipleOrgs}"
+          ;;
+        *)
+          printf 'Unexpected az ad app list query: %s\n' "$query" >&2
+          exit 2
+          ;;
+      esac
     else
       printf 'Unexpected az ad app list call\n' >&2
       exit 2
@@ -110,10 +139,71 @@ case "${1:-}:${2:-}:${3:-}" in
   ad:app:delete)
     ;;
   ad:sp:list)
-    printf '%s\n' "${AZ_MOCK_SP_COUNT:-0}"
+    case "$query" in
+      'length(@)')
+        if grep -F 'ad sp delete --id' "$AZ_MOCK_LOG" >/dev/null &&
+           [[ "${AZ_MOCK_SP_REMAINS_AFTER_DELETE:-0}" != '1' ]]; then
+          printf '0\n'
+        else
+          printf '%s\n' "${AZ_MOCK_SP_COUNT:-0}"
+        fi
+        ;;
+      '[0].id')
+        printf '%s\n' "${AZ_MOCK_SP_OBJECT_ID:-55555555-5555-5555-5555-555555555555}"
+        ;;
+      '[0].appId')
+        printf '%s\n' "${AZ_MOCK_SP_APP_ID:-${AZ_MOCK_APP_ID:-11111111-1111-1111-1111-111111111111}}"
+        ;;
+      '[0].appOwnerOrganizationId')
+        printf '%s\n' "${AZ_MOCK_SP_OWNER_TENANT_ID:-92563293-315c-4b6c-9b90-bcb47ee8c970}"
+        ;;
+      '[0].displayName')
+        printf '%s\n' "${AZ_MOCK_SP_DISPLAY_NAME:-After Party}"
+        ;;
+      '[0].servicePrincipalType')
+        printf '%s\n' "${AZ_MOCK_SP_TYPE:-Application}"
+        ;;
+      *)
+        printf 'Unexpected az ad sp list query: %s\n' "$query" >&2
+        exit 2
+        ;;
+    esac
+    ;;
+  ad:sp:delete)
     ;;
   rest:*)
-    printf '%s\n' "${AZ_MOCK_APP_ID:-11111111-1111-1111-1111-111111111111}"
+    if [[ " $* " == *' --method GET '* ]]; then
+      if [[ " $* " == *'/oauth2PermissionGrants?'* ]]; then
+        if [[ "$query" == 'value[].id' ]]; then
+          if [[ "${AZ_MOCK_GRANT_LIST_FAIL:-0}" == '1' ]]; then
+            echo 'mock grant listing failure' >&2
+            exit 2
+          fi
+          printf '%s\n' "${AZ_MOCK_GRANT_IDS:-}"
+        elif [[ "$query" == 'length(value)' ]]; then
+          printf '%s\n' "${AZ_MOCK_GRANT_COUNT_AFTER_DELETE:-0}"
+        else
+          printf 'Unexpected permission grant query: %s\n' "$query" >&2
+          exit 2
+        fi
+      elif [[ " $* " == *'/appRoleAssignments?'* ]]; then
+        if [[ "$query" == 'value[].id' ]]; then
+          printf '%s\n' "${AZ_MOCK_ASSIGNMENT_IDS:-}"
+        elif [[ "$query" == 'length(value)' ]]; then
+          printf '%s\n' "${AZ_MOCK_ASSIGNMENT_COUNT_AFTER_DELETE:-0}"
+        else
+          printf 'Unexpected app role assignment query: %s\n' "$query" >&2
+          exit 2
+        fi
+      else
+        printf 'Unexpected az rest GET call: %s\n' "$*" >&2
+        exit 2
+      fi
+    elif [[ " $* " == *' --method DELETE '* ]]; then
+      :
+    else
+      printf '%s\n' "${AZ_MOCK_APP_ID:-11111111-1111-1111-1111-111111111111}"
+    fi
     ;;
   *)
     printf 'Unexpected Azure CLI call: %s\n' "$*" >&2
@@ -126,7 +216,11 @@ chmod +x "$mock_bin/az"
 mock_path="$mock_bin:$PATH"
 app_id='11111111-1111-1111-1111-111111111111'
 tenant_id='22222222-2222-2222-2222-222222222222'
+developer_tenant_id='92563293-315c-4b6c-9b90-bcb47ee8c970'
 object_id='44444444-4444-4444-4444-444444444444'
+service_principal_id='55555555-5555-5555-5555-555555555555'
+grant_id='l5eW7x0ga0-WDOntXzHateQDNpSH5-lPk9HjD3Sarjk'
+assignment_id='QVzct6doFkStXRSoh_HGZcTUnzAfhaVGjK7Cv0gMgUsj54JH9PTzSqduJeO6sNiW'
 redirect_uri='https://example.test/after-party/'
 permission_ids=(
   'e1fe6dd8-ba31-4d61-89e7-88639da4683d'
@@ -327,5 +421,152 @@ assert_contains "$wrong_tenant_output" "Signed into tenant $tenant_id"
 assert_log_excludes 'ad app show'
 assert_log_excludes 'ad app delete'
 printf 'PASS: delete script stops before lookup or mutation in the wrong tenant\n'
+
+: >"$AZ_MOCK_LOG"
+student_uninstall_output="$(
+  env \
+    PATH="$mock_path" \
+    AFTER_PARTY_APP_ID="$app_id" \
+    EXPECTED_TENANT_ID="$developer_tenant_id" \
+    CONFIRM_STUDENT_UNINSTALL="$app_id" \
+    AZ_MOCK_TENANT_ID="$developer_tenant_id" \
+    AZ_MOCK_APP_REGISTRATION_COUNT=1 \
+    AZ_MOCK_SP_COUNT=1 \
+    AZ_MOCK_GRANT_IDS="$grant_id" \
+    AZ_MOCK_ASSIGNMENT_IDS="$assignment_id" \
+    bash scripts/uninstall-student-enterprise-app.sh
+)"
+assert_contains "$student_uninstall_output" 'Uninstalled and verified removal of the student enterprise application.'
+assert_contains "$student_uninstall_output" 'Revoked delegated grants: 1'
+assert_contains "$student_uninstall_output" 'Revoked app-role assignments: 1'
+assert_contains "$student_uninstall_output" "Preserved developer app registration: $object_id"
+assert_log_contains "rest --method DELETE --url https://graph.microsoft.com/v1.0/oauth2PermissionGrants/$grant_id"
+assert_log_contains "rest --method DELETE --url https://graph.microsoft.com/v1.0/servicePrincipals/$service_principal_id/appRoleAssignments/$assignment_id"
+assert_log_contains "ad sp delete --id $service_principal_id"
+assert_log_contains "ad app list --app-id $app_id --query \[0\].id"
+assert_log_excludes 'ad app delete'
+printf 'PASS: student uninstall removes only the exact enterprise application and preserves the developer registration\n'
+
+: >"$AZ_MOCK_LOG"
+if student_uninstall_wrong_tenant_output="$(
+  env \
+    PATH="$mock_path" \
+    AFTER_PARTY_APP_ID="$app_id" \
+    EXPECTED_TENANT_ID="$developer_tenant_id" \
+    CONFIRM_STUDENT_UNINSTALL="$app_id" \
+    AZ_MOCK_TENANT_ID="$tenant_id" \
+    bash scripts/uninstall-student-enterprise-app.sh 2>&1
+)"; then
+  fail 'student uninstall accepted the wrong tenant'
+fi
+assert_contains "$student_uninstall_wrong_tenant_output" "Signed into tenant $tenant_id"
+assert_log_excludes 'ad app list'
+assert_log_excludes 'ad sp list'
+assert_log_excludes 'rest --method DELETE'
+assert_log_excludes 'ad sp delete'
+printf 'PASS: student uninstall stops before lookup or mutation in the wrong tenant\n'
+
+: >"$AZ_MOCK_LOG"
+if student_uninstall_mismatch_output="$(
+  env \
+    PATH="$mock_path" \
+    AFTER_PARTY_APP_ID="$app_id" \
+    EXPECTED_TENANT_ID="$developer_tenant_id" \
+    CONFIRM_STUDENT_UNINSTALL="$app_id" \
+    AZ_MOCK_TENANT_ID="$developer_tenant_id" \
+    AZ_MOCK_APP_REGISTRATION_COUNT=1 \
+    AZ_MOCK_SP_COUNT=1 \
+    AZ_MOCK_SP_OWNER_TENANT_ID="$tenant_id" \
+    bash scripts/uninstall-student-enterprise-app.sh 2>&1
+)"; then
+  fail 'student uninstall accepted a mismatched enterprise application'
+fi
+assert_contains "$student_uninstall_mismatch_output" 'did not match the expected After Party identity'
+assert_log_excludes 'rest --method DELETE'
+assert_log_excludes 'ad sp delete'
+assert_log_excludes 'ad app delete'
+printf 'PASS: student uninstall refuses a mismatched enterprise application before mutation\n'
+
+: >"$AZ_MOCK_LOG"
+if student_uninstall_duplicate_output="$(
+  env \
+    PATH="$mock_path" \
+    AFTER_PARTY_APP_ID="$app_id" \
+    EXPECTED_TENANT_ID="$developer_tenant_id" \
+    CONFIRM_STUDENT_UNINSTALL="$app_id" \
+    AZ_MOCK_TENANT_ID="$developer_tenant_id" \
+    AZ_MOCK_APP_REGISTRATION_COUNT=1 \
+    AZ_MOCK_SP_COUNT=2 \
+    bash scripts/uninstall-student-enterprise-app.sh 2>&1
+)"; then
+  fail 'student uninstall accepted duplicate enterprise applications'
+fi
+assert_contains "$student_uninstall_duplicate_output" 'Expected exactly one After Party enterprise application; found 2.'
+assert_log_excludes 'rest --method DELETE'
+assert_log_excludes 'ad sp delete'
+assert_log_excludes 'ad app delete'
+printf 'PASS: student uninstall refuses duplicate enterprise applications before mutation\n'
+
+: >"$AZ_MOCK_LOG"
+if student_uninstall_grant_lookup_output="$(
+  env \
+    PATH="$mock_path" \
+    AFTER_PARTY_APP_ID="$app_id" \
+    EXPECTED_TENANT_ID="$developer_tenant_id" \
+    CONFIRM_STUDENT_UNINSTALL="$app_id" \
+    AZ_MOCK_TENANT_ID="$developer_tenant_id" \
+    AZ_MOCK_APP_REGISTRATION_COUNT=1 \
+    AZ_MOCK_SP_COUNT=1 \
+    AZ_MOCK_GRANT_LIST_FAIL=1 \
+    bash scripts/uninstall-student-enterprise-app.sh 2>&1
+)"; then
+  fail 'student uninstall continued after grant listing failed'
+fi
+assert_contains "$student_uninstall_grant_lookup_output" 'delegated grants could not be listed'
+assert_log_excludes 'rest --method DELETE'
+assert_log_excludes 'ad sp delete'
+assert_log_excludes 'ad app delete'
+printf 'PASS: student uninstall stops before deletion when grant discovery fails\n'
+
+: >"$AZ_MOCK_LOG"
+if student_uninstall_unsafe_grant_id_output="$(
+  env \
+    PATH="$mock_path" \
+    AFTER_PARTY_APP_ID="$app_id" \
+    EXPECTED_TENANT_ID="$developer_tenant_id" \
+    CONFIRM_STUDENT_UNINSTALL="$app_id" \
+    AZ_MOCK_TENANT_ID="$developer_tenant_id" \
+    AZ_MOCK_APP_REGISTRATION_COUNT=1 \
+    AZ_MOCK_SP_COUNT=1 \
+    AZ_MOCK_GRANT_IDS='../unexpected' \
+    bash scripts/uninstall-student-enterprise-app.sh 2>&1
+)"; then
+  fail 'student uninstall accepted an unsafe Graph grant ID'
+fi
+assert_contains "$student_uninstall_unsafe_grant_id_output" 'URL-safe Microsoft Graph resource ID'
+assert_log_excludes 'rest --method DELETE'
+assert_log_excludes 'ad sp delete'
+assert_log_excludes 'ad app delete'
+printf 'PASS: student uninstall rejects unsafe Graph resource IDs before deletion\n'
+
+: >"$AZ_MOCK_LOG"
+if student_uninstall_registration_loss_output="$(
+  env \
+    PATH="$mock_path" \
+    AFTER_PARTY_APP_ID="$app_id" \
+    EXPECTED_TENANT_ID="$developer_tenant_id" \
+    CONFIRM_STUDENT_UNINSTALL="$app_id" \
+    AZ_MOCK_TENANT_ID="$developer_tenant_id" \
+    AZ_MOCK_APP_REGISTRATION_COUNT=1 \
+    AZ_MOCK_APP_DISAPPEARS_AFTER_SP_DELETE=1 \
+    AZ_MOCK_SP_COUNT=1 \
+    bash scripts/uninstall-student-enterprise-app.sh 2>&1
+)"; then
+  fail 'student uninstall reported success after developer registration loss'
+fi
+assert_contains "$student_uninstall_registration_loss_output" 'developer app registration count changed unexpectedly'
+assert_log_contains "ad sp delete --id $service_principal_id"
+assert_log_excludes 'ad app delete'
+printf 'PASS: student uninstall fails closed if developer-registration preservation cannot be verified\n'
 
 printf 'All shell script tests passed.\n'

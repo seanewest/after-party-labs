@@ -27,6 +27,21 @@ export {
   type GhCommandRunner,
 } from "./github-source.ts";
 export {
+  formatHandoff,
+  HANDOFF_PREFIX,
+  HANDOFF_VERSION,
+  parseHandoff,
+  type HandoffEnvelope,
+  type ParsedHandoff,
+} from "./handoff.ts";
+export {
+  LifecycleHandler,
+  LIFECYCLE_HOOK_REVISION,
+  parseLifecycleInput,
+  type LifecycleHookInput,
+  type LifecycleHookOutput,
+} from "./lifecycle.ts";
+export {
   DispatcherQueue,
   ESCALATION_KINDS,
   ESCALATION_STATUSES,
@@ -66,3 +81,43 @@ export {
   parseAgentName,
   type AgentName,
 } from "./registry.ts";
+export {
+  configuredWorkerNames,
+  LIFECYCLE_EVENTS,
+  WorkerSessionError,
+  WorkerSessionStore,
+  type LifecycleEvent,
+  type RegisterSessionInput,
+  type SessionStoreOptions,
+  type StartTurnInput,
+  type WorkerSessionRecord,
+} from "./session-store.ts";
+export {
+  TerminalRunnerError,
+  TmuxWorkerTerminal,
+  type CommandExecutor,
+  type CommandResult,
+  type TmuxWorkerTerminalOptions,
+  type WorkerTerminal,
+} from "./tmux-runner.ts";
+export {
+  DeliveryCoordinator,
+  type DeliveryCoordinatorOptions,
+  type DeliveryResult,
+} from "./worker-runner.ts";
+export {
+  CodexExecTurnOutcomeSource,
+  parseJsonLines,
+  StructuredTurnOutcomeMonitor,
+  type CodexExecTurnOutcomeSourceOptions,
+  type StructuredTurnContext,
+  type StructuredTurnResult,
+  type TurnOutcomeSource,
+} from "./turn-outcome.ts";
+export {
+  FlockWorkerClientLock,
+  WorkerClientLockError,
+  type FlockWorkerClientLockOptions,
+  type WorkerClientLease,
+  type WorkerClientLock,
+} from "./worker-lock.ts";

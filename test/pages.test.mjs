@@ -110,6 +110,16 @@ test('the sign-in copy distinguishes identity consent from lab permissions', asy
   assert.doesNotMatch(index, /does not install After Party or change your tenant/i);
 });
 
+test('the public hero states the product identity without workflow copy', async () => {
+  const index = await readFile(new URL('../site/index.html', import.meta.url), 'utf8');
+
+  assert.match(index, /<title>After Party Labs — A future cybersecurity lab platform<\/title>/);
+  assert.match(index, /<h1>After Party Labs<\/h1>/);
+  assert.match(index, /<p class="lede">A future cybersecurity lab platform<\/p>/);
+  assert.doesNotMatch(index, /class="eyebrow"/);
+  assert.doesNotMatch(index, /Connect an isolated tenant and turn it into a cybersecurity lab/);
+});
+
 test('buildPages stamps the exact commit and base path', async (t) => {
   const root = await temporaryDirectory(t);
   const source = path.join(root, 'source');

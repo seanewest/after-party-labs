@@ -178,6 +178,30 @@ test('Graph tokens are acquired silently for the selected tenant and account', a
   ]);
 });
 
+test('runtime tokens are requested only for the reviewed After Party API scope', async () => {
+  const selected = account({ tenantId: '33333333-3333-3333-3333-333333333333' });
+  const msal = fakeMsal({ accounts: [selected], activeAccount: selected });
+  const authentication = createAuthentication({
+    configuration,
+    createPublicClientApplication: msal.createPublicClientApplication,
+  });
+  const scope = `api://${configuration.clientId}/AfterParty.Operate`;
+
+  assert.equal(await authentication.acquireRuntimeToken(scope), 'graph-access-token');
+  assert.deepEqual(msal.calls.at(-1), [
+    'acquireTokenSilent',
+    {
+      account: selected,
+      authority: `https://login.microsoftonline.com/${selected.tenantId}`,
+      scopes: [scope],
+    },
+  ]);
+  await assert.rejects(
+    authentication.acquireRuntimeToken('https://graph.microsoft.com/User.Read'),
+    (error) => error.code === 'token_unavailable',
+  );
+});
+
 test('account details expose identity and tenant without token data', () => {
   assert.deepEqual(describeAccount(account()), {
     displayName: 'Ada Lovelace',

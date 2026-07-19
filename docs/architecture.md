@@ -127,6 +127,13 @@ The SPA uses the pinned MSAL Browser library for organizational-account sign-in 
 code and PKCE. MSAL owns its browser session cache and redirect protocol; After Party application
 code reads account metadata but does not inspect, copy, or persist refresh tokens.
 
+The same application exposes one delegated `AfterParty.Operate` scope for its tenant-side API and
+preauthorizes only the official SPA client. The SPA requests a tenant-specific API token immediately
+before an operation and treats it as opaque. Container Apps authentication validates its signature,
+issuer, audience, and calling application. The API then requires the exact tenant, scope, operator,
+installed runtime identity, requested operation, and deployed commit, and rejects replayed request
+IDs through the tenant state plane before an operation can start.
+
 ### Runtime managed identity
 
 The tenant-side API and jobs use an Azure managed identity for unattended work.

@@ -127,6 +127,18 @@ case "${1:-}:${2:-}:${3:-}" in
       'join(`,`, sort(spa.redirectUris))')
         printf '%s\n' "${AZ_MOCK_REDIRECT_URIS:-http://127.0.0.1:4173/,https://example.test/after-party/}"
         ;;
+      'identifierUris[0]')
+        printf 'api://%s\n' "${AZ_MOCK_APP_ID:-11111111-1111-1111-1111-111111111111}"
+        ;;
+      'api.requestedAccessTokenVersion')
+        printf '2\n'
+        ;;
+      *oauth2PermissionScopes*)
+        printf '5c9bfc9c-4f2e-477d-a572-3d7fabe8542d\n'
+        ;;
+      *preAuthorizedApplications*)
+        printf '5c9bfc9c-4f2e-477d-a572-3d7fabe8542d\n'
+        ;;
       *requiredResourceAccess*)
         printf '%s\n' "${AZ_MOCK_PERMISSION_IDS:-}"
         ;;
@@ -254,8 +266,11 @@ create_output="$(
 assert_contains "$create_output" 'Created and verified the multitenant app registration.'
 assert_contains "$create_output" "Application (client) ID: $app_id"
 assert_contains "$create_output" 'Configured 14 delegated Microsoft Graph permissions:'
+assert_contains "$create_output" "Runtime API scope: api://$app_id/AfterParty.Operate"
 assert_contains "$create_output" 'No client secret, certificate, or service principal was created.'
 assert_log_contains 'rest --method POST'
+assert_log_contains 'AfterParty.Operate'
+assert_log_contains 'requestedAccessTokenVersion'
 assert_log_contains 'http://127.0.0.1:4173/'
 for permission_id in "${permission_ids[@]}"; do
   assert_log_contains "$permission_id"

@@ -18,6 +18,8 @@
   LOCAL_SPA_REDIRECT_URI='http://127.0.0.1:4173/'
   graph_applications_url='https://graph.microsoft.com/v1.0/applications'
   microsoft_graph_app_id='00000003-0000-0000-c000-000000000000'
+  runtime_api_scope_id='5c9bfc9c-4f2e-477d-a572-3d7fabe8542d'
+  runtime_api_scope_name='AfterParty.Operate'
   microsoft_graph_permission_names=(
     'User.Read'
     'Directory.ReadWrite.All'
@@ -137,6 +139,7 @@
 
   created_app_id=''
   target_app_id=''
+  target_object_id=''
   cleanup_on_error() {
     status=$?
     trap - EXIT
@@ -225,7 +228,32 @@
       --body "$reconcile_request_body" \
       --only-show-errors >/dev/null
     target_app_id="$AFTER_PARTY_APP_ID"
+    target_object_id="$existing_object_id"
   fi
+
+  if [[ -z "$target_object_id" ]]; then
+    target_object_id="$(
+      az ad app show --id "$target_app_id" --query id --output tsv --only-show-errors
+    )"
+  fi
+  if [[ ! "$target_object_id" =~ $uuid_pattern ]]; then
+    echo 'The created application object ID could not be verified.' >&2
+    exit 1
+  fi
+
+  runtime_api_request_body="$(printf \
+    '{"identifierUris":["api://%s"],"api":{"requestedAccessTokenVersion":2,"oauth2PermissionScopes":[{"adminConsentDescription":"Allow the After Party SPA to call the matching tenant runtime as the signed-in operator.","adminConsentDisplayName":"Operate the After Party tenant runtime","id":"%s","isEnabled":true,"type":"Admin","userConsentDescription":null,"userConsentDisplayName":null,"value":"%s"}],"preAuthorizedApplications":[{"appId":"%s","delegatedPermissionIds":["%s"]}]}}' \
+    "$target_app_id" \
+    "$runtime_api_scope_id" \
+    "$runtime_api_scope_name" \
+    "$target_app_id" \
+    "$runtime_api_scope_id")"
+  az rest \
+    --method PATCH \
+    --url "$graph_applications_url/$target_object_id" \
+    --headers 'Content-Type=application/json' \
+    --body "$runtime_api_request_body" \
+    --only-show-errors >/dev/null
 
   verified='false'
   for _ in {1..10}; do
@@ -250,9 +278,41 @@
         --output tsv \
         --only-show-errors 2>/dev/null || true
     )"
+    actual_identifier_uri="$(
+      az ad app show \
+        --id "$target_app_id" \
+        --query 'identifierUris[0]' \
+        --output tsv \
+        --only-show-errors 2>/dev/null || true
+    )"
+    actual_token_version="$(
+      az ad app show \
+        --id "$target_app_id" \
+        --query 'api.requestedAccessTokenVersion' \
+        --output tsv \
+        --only-show-errors 2>/dev/null || true
+    )"
+    actual_runtime_scope_id="$(
+      az ad app show \
+        --id "$target_app_id" \
+        --query "api.oauth2PermissionScopes[?value == '$runtime_api_scope_name' && isEnabled].id | [0]" \
+        --output tsv \
+        --only-show-errors 2>/dev/null || true
+    )"
+    actual_preauthorized_scope_id="$(
+      az ad app show \
+        --id "$target_app_id" \
+        --query "api.preAuthorizedApplications[?appId == '$target_app_id'].delegatedPermissionIds[0] | [0]" \
+        --output tsv \
+        --only-show-errors 2>/dev/null || true
+    )"
     if [[ "$actual_audience" == 'AzureADMultipleOrgs' &&
           "$actual_redirect_uris" == "$expected_redirect_uris" &&
-          "$actual_permission_ids" == "$expected_permission_ids" ]]; then
+          "$actual_permission_ids" == "$expected_permission_ids" &&
+          "$actual_identifier_uri" == "api://$target_app_id" &&
+          "$actual_token_version" == '2' &&
+          "$actual_runtime_scope_id" == "$runtime_api_scope_id" &&
+          "$actual_preauthorized_scope_id" == "$runtime_api_scope_id" ]]; then
       verified='true'
       break
     fi
@@ -288,6 +348,7 @@
   printf 'Home tenant ID: %s\n' "$tenant_id"
   printf 'SPA redirect URI: %s\n' "$SPA_REDIRECT_URI"
   printf 'Local redirect URI: %s\n' "$LOCAL_SPA_REDIRECT_URI"
+  printf 'Runtime API scope: api://%s/%s\n' "$target_app_id" "$runtime_api_scope_name"
   printf 'Graph token expires: %s\n' "$token_expiry"
   printf '\nConfigured %s delegated Microsoft Graph permissions:\n' "${#microsoft_graph_permission_names[@]}"
   printf '  %s\n' "${microsoft_graph_permission_names[@]}"

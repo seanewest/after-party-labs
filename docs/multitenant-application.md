@@ -60,6 +60,11 @@ identity consent during sign-in may create the tenant's enterprise application, 
 grant the broad permissions below. The student installation flow must show that requested access,
 obtain the appropriate consent, and verify the resulting grants.
 
+The registration also exposes `AfterParty.Operate`, an admin-consent-only delegated scope for the
+tenant-owned After Party API. It is preauthorized only for the same official SPA application. This
+scope produces a token whose audience is After Party—not Microsoft Graph—and the SPA sends that
+opaque token only to the verified tenant runtime. It is not an app-only permission or credential.
+
 | Microsoft Graph permission | What After Party can explore |
 | --- | --- |
 | `User.Read` | Identify the signed-in account. |

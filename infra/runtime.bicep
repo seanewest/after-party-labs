@@ -2,6 +2,7 @@ targetScope = 'resourceGroup'
 
 param expectedTenantId string
 param expectedSubscriptionId string
+param applicationClientId string
 param location string
 param runtimeName string
 param commit string
@@ -124,6 +125,9 @@ resource api 'Microsoft.App/containerApps@2025-01-01' = {
           env: [
             { name: 'AFTER_PARTY_TENANT_ID', value: expectedTenantId }
             { name: 'AFTER_PARTY_SUBSCRIPTION_ID', value: expectedSubscriptionId }
+            { name: 'AFTER_PARTY_APPLICATION_ID', value: applicationClientId }
+            { name: 'AFTER_PARTY_API_AUDIENCE', value: applicationClientId }
+            { name: 'AFTER_PARTY_API_SCOPE', value: 'AfterParty.Operate' }
             { name: 'AFTER_PARTY_COMMIT', value: commit }
             { name: 'AFTER_PARTY_STATE_ACCOUNT', value: stateStorage.name }
             { name: 'AFTER_PARTY_STATE_CONTAINER', value: stateContainer.name }
@@ -153,7 +157,43 @@ resource api 'Microsoft.App/containerApps@2025-01-01' = {
   }
 }
 
+resource apiAuthentication 'Microsoft.App/containerApps/authConfigs@2025-01-01' = {
+  parent: api
+  name: 'current'
+  properties: {
+    platform: {
+      enabled: true
+    }
+    globalValidation: {
+      unauthenticatedClientAction: 'Return401'
+    }
+    httpSettings: {
+      requireHttps: true
+    }
+    identityProviders: {
+      azureActiveDirectory: {
+        enabled: true
+        registration: {
+          clientId: applicationClientId
+          openIdIssuer: '${environment().authentication.loginEndpoint}${expectedTenantId}/v2.0'
+        }
+        validation: {
+          allowedAudiences: [
+            applicationClientId
+          ]
+          defaultAuthorizationPolicy: {
+            allowedApplications: [
+              applicationClientId
+            ]
+          }
+        }
+      }
+    }
+  }
+}
+
 output apiId string = api.id
 output apiUrl string = 'https://${api.properties.configuration.ingress.fqdn}'
+output authConfigId string = apiAuthentication.id
 output identityId string = runtimeIdentity.id
 output stateContainerId string = stateContainer.id

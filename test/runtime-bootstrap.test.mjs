@@ -11,6 +11,7 @@ import {
 
 const tenantId = '11111111-1111-1111-1111-111111111111';
 const subscriptionId = '22222222-2222-2222-2222-222222222222';
+const applicationClientId = '33333333-3333-3333-3333-333333333333';
 const commit = 'a'.repeat(40);
 const digest = 'b'.repeat(64);
 
@@ -41,6 +42,7 @@ function request(overrides = {}) {
   return {
     tenantId,
     subscriptionId,
+    applicationClientId,
     location: 'eastus',
     resourceGroupName: 'after-party-runtime',
     runtimeName: 'after-party',
@@ -87,6 +89,10 @@ function deploymentOutputs(overrides = {}) {
         apiUrl: {
           type: 'String',
           value: 'https://after-party-api.example.eastus.azurecontainerapps.io',
+        },
+        authConfigId: {
+          type: 'String',
+          value: `${resourceGroupId}/providers/Microsoft.App/containerApps/after-party-api/authConfigs/current`,
         },
         identityId: {
           type: 'String',
@@ -210,10 +216,12 @@ test('missing deployment or role-assignment capability fails before mutation', (
   );
 });
 
-test('missing environment join or identity assignment capability fails before mutation', () => {
+test('missing runtime attachment or authentication capability fails before mutation', () => {
   for (const missingAction of [
     'Microsoft.App/managedEnvironments/join/action',
     'Microsoft.ManagedIdentity/userAssignedIdentities/assign/action',
+    'Microsoft.App/containerApps/authConfigs/read',
+    'Microsoft.App/containerApps/authConfigs/write',
   ]) {
     const customRole = [
       {
@@ -267,6 +275,7 @@ test('a complete deployment is verified against the exact plan identity', () => 
   assert.equal(result.subscriptionId, subscriptionId);
   assert.equal(result.subscriptionName, 'Student Lab');
   assert.equal(result.commit, commit);
+  assert.match(result.authConfigId, /authConfigs\/current$/);
   assert.match(result.apiUrl, /^https:/);
   assert.equal(Object.hasOwn(result, 'token'), false);
 });
@@ -320,6 +329,7 @@ test('the Bicep runtime is minimal, passwordless, stateful, and versioned', asyn
     'Microsoft.Resources/resourceGroups',
     'Microsoft.App/managedEnvironments',
     'Microsoft.App/containerApps',
+    'Microsoft.App/containerApps/authConfigs',
     'Microsoft.ManagedIdentity/userAssignedIdentities',
     'Microsoft.Storage/storageAccounts',
     'Microsoft.Authorization/roleAssignments',
@@ -331,6 +341,9 @@ test('the Bicep runtime is minimal, passwordless, stateful, and versioned', asyn
   assert.match(runtime, /Storage\/storageAccounts\/blobServices\/containers/);
   assert.match(runtime, /after-party-commit/);
   assert.match(runtime, /apiImage/);
+  assert.match(runtime, /unauthenticatedClientAction: 'Return401'/);
+  assert.match(runtime, /allowedApplications/);
+  assert.match(runtime, /AFTER_PARTY_API_SCOPE/);
   assert.doesNotMatch(source, /Microsoft\.App\/jobs/i);
   assert.doesNotMatch(source, /clientSecret|listKeys|accountKey/i);
 });

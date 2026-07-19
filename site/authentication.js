@@ -103,6 +103,26 @@ export function createAuthentication({ configuration, createPublicClientApplicat
     },
   });
 
+  async function acquireAccessToken(scopes) {
+    const account = client.getActiveAccount();
+    if (!account || !Array.isArray(scopes) || !scopes.length) {
+      throw { code: 'token_unavailable' };
+    }
+    try {
+      const response = await client.acquireTokenSilent({
+        account,
+        authority: `https://login.microsoftonline.com/${account.tenantId}`,
+        scopes: [...scopes],
+      });
+      if (!response?.accessToken) {
+        throw new Error('Missing access token');
+      }
+      return response.accessToken;
+    } catch {
+      throw { code: 'token_unavailable' };
+    }
+  }
+
   return {
     async initialize() {
       await client.initialize();
@@ -130,23 +150,17 @@ export function createAuthentication({ configuration, createPublicClientApplicat
     },
 
     async acquireGraphToken(scopes) {
-      const account = client.getActiveAccount();
-      if (!account || !Array.isArray(scopes) || !scopes.length) {
+      if (!Array.isArray(scopes) || scopes.some((scope) => !/^[A-Za-z][A-Za-z.]+$/.test(scope))) {
         throw { code: 'token_unavailable' };
       }
-      try {
-        const response = await client.acquireTokenSilent({
-          account,
-          authority: `https://login.microsoftonline.com/${account.tenantId}`,
-          scopes: [...scopes],
-        });
-        if (!response?.accessToken) {
-          throw new Error('Missing access token');
-        }
-        return response.accessToken;
-      } catch {
+      return acquireAccessToken(scopes);
+    },
+
+    async acquireRuntimeToken(scope) {
+      if (scope !== `api://${clientId}/AfterParty.Operate`) {
         throw { code: 'token_unavailable' };
       }
+      return acquireAccessToken([scope]);
     },
 
     selectAccount(homeAccountId) {

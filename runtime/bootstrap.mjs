@@ -28,6 +28,8 @@ export const REQUIRED_CONTROL_PLANE_ACTIONS = Object.freeze([
   'Microsoft.App/managedEnvironments/join/action',
   'Microsoft.App/containerApps/read',
   'Microsoft.App/containerApps/write',
+  'Microsoft.App/containerApps/authConfigs/read',
+  'Microsoft.App/containerApps/authConfigs/write',
   'Microsoft.ManagedIdentity/userAssignedIdentities/read',
   'Microsoft.ManagedIdentity/userAssignedIdentities/write',
   'Microsoft.ManagedIdentity/userAssignedIdentities/assign/action',
@@ -233,6 +235,7 @@ export function createRuntimePlan({ request, evidence }) {
   }
 
   const commit = requireCommit(request.commit);
+  const applicationClientId = requireUuid(request.applicationClientId, 'request_invalid');
   const image = requireImageDigest(request.apiImage);
   const resourceGroupName = requireResourceGroupName(request.resourceGroupName);
   const runtimeName = requireRuntimeName(request.runtimeName);
@@ -261,6 +264,7 @@ export function createRuntimePlan({ request, evidence }) {
       parameters: Object.freeze({
         expectedTenantId: tenantId,
         expectedSubscriptionId: subscriptionId,
+        applicationClientId,
         location,
         resourceGroupName,
         runtimeName,
@@ -273,6 +277,7 @@ export function createRuntimePlan({ request, evidence }) {
       'resource group',
       'Container Apps environment',
       'Container App API',
+      'Container App Microsoft Entra authentication',
       'user-assigned managed identity',
       'StorageV2 account and private state container',
       'container-scoped Storage Blob Data Contributor assignment',
@@ -316,6 +321,7 @@ export function verifyRuntimeDeployment({ plan, deployment }) {
   const resourceGroupId = outputValue(outputs, 'resourceGroupId');
   const apiId = outputValue(outputs, 'apiId');
   const apiUrl = outputValue(outputs, 'apiUrl');
+  const authConfigId = outputValue(outputs, 'authConfigId');
   const identityId = outputValue(outputs, 'identityId');
   const stateContainerId = outputValue(outputs, 'stateContainerId');
   const tenantLockBlobPath = outputValue(outputs, 'tenantLockBlobPath');
@@ -325,6 +331,7 @@ export function verifyRuntimeDeployment({ plan, deployment }) {
     `${expectedResourceGroupId}/providers/Microsoft.App/containerApps/${plan.deployment.parameters.runtimeName}-api`;
   const expectedIdentityId =
     `${expectedResourceGroupId}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/${plan.deployment.parameters.runtimeName}-identity`;
+  const expectedAuthConfigId = `${expectedApiId}/authConfigs/current`;
   const stateContainerPrefix =
     `${expectedResourceGroupId}/providers/Microsoft.Storage/storageAccounts/`.toLowerCase();
   const normalizedStateContainerId = stateContainerId.toLowerCase();
@@ -334,6 +341,7 @@ export function verifyRuntimeDeployment({ plan, deployment }) {
   if (
     resourceGroupId.toLowerCase() !== expectedResourceGroupId.toLowerCase() ||
     apiId.toLowerCase() !== expectedApiId.toLowerCase() ||
+    authConfigId.toLowerCase() !== expectedAuthConfigId.toLowerCase() ||
     identityId.toLowerCase() !== expectedIdentityId.toLowerCase() ||
     tenantLockBlobPath !== TENANT_LOCK_BLOB_PATH ||
     stateContainerPath.length !== 5 ||
@@ -355,6 +363,7 @@ export function verifyRuntimeDeployment({ plan, deployment }) {
     resourceGroupId,
     apiId,
     apiUrl,
+    authConfigId,
     identityId,
     stateContainerId,
     tenantLockBlobPath,

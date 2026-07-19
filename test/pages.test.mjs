@@ -41,6 +41,7 @@ test('the public app configuration contains only the reviewed SPA contract', asy
       production: 'https://seanewest.github.io/after-party-labs/',
       local: 'http://127.0.0.1:4173/',
     },
+    runtimeApiScope: 'api://9edaa951-658e-4be2-9623-ee906cb604b2/AfterParty.Operate',
     microsoftGraphDelegatedScopes: [
       'User.Read',
       'Directory.ReadWrite.All',
@@ -91,6 +92,10 @@ test('the public app configuration contains only the reviewed SPA contract', asy
   assert.match(
     await readFile(path.join(output, 'experiments.js'), 'utf8'),
     /mountExperimentCard/,
+  );
+  assert.match(
+    await readFile(path.join(output, 'runtime-api.js'), 'utf8'),
+    /createRuntimeApiClient/,
   );
 });
 

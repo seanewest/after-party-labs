@@ -6,7 +6,12 @@ import {
   describeAccount,
   formatAuthenticationError,
 } from '../site/authentication.js';
-import { createInstallationController, createSignInController } from '../site/app.js';
+import {
+  createInstallationController,
+  createSignInController,
+  createView,
+  handleAuthenticationRedirectError,
+} from '../site/app.js';
 
 const configuration = {
   authority: 'https://login.microsoftonline.com/organizations',
@@ -24,7 +29,13 @@ function account(overrides = {}) {
   };
 }
 
-function fakeMsal({ accounts = [], activeAccount = null, redirectResult = null } = {}) {
+function fakeMsal({
+  accounts = [],
+  activeAccount = null,
+  redirectResult = null,
+  redirectError = null,
+  silentError = null,
+} = {}) {
   const calls = [];
   let selectedAccount = activeAccount;
   let receivedConfiguration;
@@ -34,6 +45,7 @@ function fakeMsal({ accounts = [], activeAccount = null, redirectResult = null }
     },
     async handleRedirectPromise() {
       calls.push(['handleRedirectPromise']);
+      if (redirectError) throw redirectError;
       return redirectResult;
     },
     getAllAccounts() {
@@ -54,7 +66,11 @@ function fakeMsal({ accounts = [], activeAccount = null, redirectResult = null }
     },
     async acquireTokenSilent(request) {
       calls.push(['acquireTokenSilent', request]);
+      if (silentError) throw silentError;
       return { accessToken: 'graph-access-token' };
+    },
+    async acquireTokenRedirect(request) {
+      calls.push(['acquireTokenRedirect', request]);
     },
   };
 
@@ -106,6 +122,23 @@ test('redirect completion selects and reports the returned account', async () =>
 
   assert.equal(state.status, 'signed-in');
   assert.equal(state.account, selected);
+  assert.deepEqual(msal.calls.at(-1), ['setActiveAccount', selected]);
+});
+
+test('redirect failure preserves the cached identity for verification-specific recovery', async () => {
+  const selected = account();
+  const redirectError = { errorCode: 'user_cancelled' };
+  const msal = fakeMsal({ accounts: [selected], redirectError });
+  const authentication = createAuthentication({
+    configuration,
+    createPublicClientApplication: msal.createPublicClientApplication,
+  });
+
+  const state = await authentication.initialize();
+
+  assert.equal(state.status, 'signed-in');
+  assert.equal(state.account, selected);
+  assert.equal(state.redirectError, redirectError);
   assert.deepEqual(msal.calls.at(-1), ['setActiveAccount', selected]);
 });
 
@@ -176,6 +209,42 @@ test('Graph tokens are acquired silently for the selected tenant and account', a
       scopes: ['User.Read'],
     },
   ]);
+});
+
+test('Graph interaction recovery starts only through an explicit redirect call', async () => {
+  const selected = account({ tenantId: '33333333-3333-3333-3333-333333333333' });
+  const msal = fakeMsal({ accounts: [selected], activeAccount: selected });
+  const authentication = createAuthentication({
+    configuration,
+    createPublicClientApplication: msal.createPublicClientApplication,
+  });
+
+  await authentication.acquireGraphTokenRedirect(['User.Read', 'Directory.ReadWrite.All']);
+
+  assert.deepEqual(msal.calls.at(-1), ['acquireTokenRedirect', {
+    account: selected,
+    authority: `https://login.microsoftonline.com/${selected.tenantId}`,
+    scopes: ['User.Read', 'Directory.ReadWrite.All'],
+  }]);
+});
+
+test('Graph silent acquisition distinguishes interaction recovery from other failures', async () => {
+  const selected = account({ tenantId: '33333333-3333-3333-3333-333333333333' });
+  for (const [silentError, expected] of [
+    [{ errorCode: 'interaction_required' }, 'interaction_required'],
+    [{ errorCode: 'network_error' }, 'token_unavailable'],
+  ]) {
+    const msal = fakeMsal({ activeAccount: selected, silentError });
+    const authentication = createAuthentication({
+      configuration,
+      createPublicClientApplication: msal.createPublicClientApplication,
+    });
+    await assert.rejects(
+      authentication.acquireGraphToken(['User.Read']),
+      (error) => error.code === expected,
+    );
+    assert.equal(msal.calls.some(([name]) => name === 'acquireTokenRedirect'), false);
+  }
 });
 
 test('runtime tokens are requested only for the reviewed After Party API scope', async () => {
@@ -404,4 +473,275 @@ test('the installation controller verifies an already connected tenant without a
   const state = await controller.initialize();
   assert.equal(state.status, 'installed');
   assert.deepEqual(verified, { account: selected, accessToken: 'access-token' });
+});
+
+function memoryStorage() {
+  const values = new Map();
+  return {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: (key) => values.delete(key),
+  };
+}
+
+test('permission verification resumes only after the user-triggered Graph redirect', async () => {
+  const selected = account({ tenantId: '33333333-3333-3333-3333-333333333333' });
+  const callback = { accountId: selected.homeAccountId, tenantId: selected.tenantId };
+  const storage = memoryStorage();
+  const events = [];
+  let callbackAvailable = true;
+  let tokenAttempts = 0;
+  let redirects = 0;
+  let verified;
+  const dependencies = {
+    authentication: {
+      getState: () => ({ status: 'signed-in', account: selected }),
+      async acquireGraphToken() {
+        tokenAttempts += 1;
+        if (tokenAttempts === 1) throw { code: 'interaction_required' };
+        return 'redirect-access-token';
+      },
+      async acquireGraphTokenRedirect(scopes) {
+        redirects += 1;
+        assert.deepEqual(scopes, ['User.Read', 'Directory.ReadWrite.All']);
+      },
+    },
+    installation: {
+      consumeCallback() {
+        if (!callbackAvailable) return null;
+        callbackAvailable = false;
+        return callback;
+      },
+      async verify(input) {
+        verified = input;
+        return { status: 'installed', tenantId: selected.tenantId };
+      },
+      async verifyCurrent() {
+        throw new Error('consent callback was not resumed');
+      },
+    },
+    scopes: ['User.Read', 'Directory.ReadWrite.All'],
+    storage,
+    view: {
+      setInstallationBusy() {},
+      renderInstallation: (state) => events.push(['render', state.status]),
+      renderInstallationError: (message) => events.push(['error', message]),
+    },
+    currentUrl: () => 'https://example.test/',
+  };
+  const controller = createInstallationController(dependencies);
+
+  assert.equal((await controller.initialize()).status, 'verification-required');
+  assert.equal(redirects, 0);
+  assert.ok(storage.getItem('after-party.permission-verification'));
+  await controller.continueVerification();
+  assert.equal(redirects, 1);
+  assert.equal((await controller.initialize()).status, 'installed');
+  assert.deepEqual(verified, {
+    account: selected,
+    accessToken: 'redirect-access-token',
+    callback,
+  });
+  assert.equal(storage.getItem('after-party.permission-verification'), null);
+  assert.deepEqual(events, [
+    ['render', 'verification-required'],
+    ['render', 'installed'],
+  ]);
+});
+
+test('verification continuation preserves the correct retry action after cancellation and failure', async () => {
+  const selected = account({ tenantId: '33333333-3333-3333-3333-333333333333' });
+  for (const scenario of ['cancelled', 'network', 'mismatch']) {
+    const storage = memoryStorage();
+    const errors = [];
+    let currentAccount = selected;
+    const controller = createInstallationController({
+      authentication: {
+        getState: () => ({ status: 'signed-in', account: currentAccount }),
+        acquireGraphToken: async () => { throw { code: 'interaction_required' }; },
+        acquireGraphTokenRedirect: async () => {
+          if (scenario === 'cancelled') throw { errorCode: 'user_cancelled' };
+          if (scenario === 'network') throw { errorCode: 'network_error' };
+        },
+      },
+      installation: {
+        consumeCallback: () => ({
+          accountId: selected.homeAccountId,
+          tenantId: selected.tenantId,
+        }),
+      },
+      scopes: ['User.Read'],
+      storage,
+      view: {
+        setInstallationBusy() {},
+        renderInstallation() {},
+        renderInstallationError: (message, options) => errors.push({ message, options }),
+      },
+      currentUrl: () => 'https://example.test/',
+    });
+    await controller.initialize();
+    if (scenario === 'mismatch') {
+      currentAccount = account({
+        homeAccountId: 'different-account',
+        tenantId: '44444444-4444-4444-4444-444444444444',
+      });
+    }
+    await controller.continueVerification();
+    assert.equal(errors.length, 1);
+    assert.doesNotMatch(errors[0].message, /secret|undefined|object/i);
+    if (scenario === 'cancelled') {
+      assert.match(errors[0].message, /verification was cancelled/i);
+      assert.doesNotMatch(errors[0].message, /permissions were not granted/i);
+    }
+    assert.equal(
+      errors[0].options.verificationAction,
+      scenario === 'mismatch' ? 'none' : 'continue',
+    );
+  }
+});
+
+test('an expired continuation restarts verification without repeating admin consent', async () => {
+  const selected = account({ tenantId: '33333333-3333-3333-3333-333333333333' });
+  const storage = memoryStorage();
+  let currentTime = 1_000;
+  let redirects = 0;
+  const errors = [];
+  let callbackAvailable = true;
+  const controller = createInstallationController({
+    authentication: {
+      getState: () => ({ status: 'signed-in', account: selected }),
+      acquireGraphToken: async () => { throw { code: 'interaction_required' }; },
+      acquireGraphTokenRedirect: async () => { redirects += 1; },
+    },
+    installation: {
+      consumeCallback() {
+        if (!callbackAvailable) return null;
+        callbackAvailable = false;
+        return {
+          accountId: selected.homeAccountId,
+          tenantId: selected.tenantId,
+        };
+      },
+    },
+    scopes: ['User.Read'],
+    storage,
+    now: () => currentTime,
+    view: {
+      setInstallationBusy() {},
+      renderInstallation() {},
+      renderInstallationError: (message, options) => errors.push({ message, options }),
+    },
+    currentUrl: () => 'https://example.test/',
+  });
+
+  await controller.initialize();
+  currentTime += 10 * 60 * 1000 + 1;
+  await controller.initialize();
+  assert.equal(errors.at(-1).options.verificationAction, 'restart');
+
+  await controller.continueVerification();
+  assert.equal(redirects, 1);
+  assert.equal(errors.length, 1);
+  const pending = JSON.parse(storage.getItem('after-party.permission-verification'));
+  assert.equal(pending.createdAt, currentTime);
+  assert.equal(pending.callback, null);
+});
+
+test('redirect-return cancellation remains a verification retry when pending state exists', async () => {
+  const selected = account({ tenantId: '33333333-3333-3333-3333-333333333333' });
+  const storage = memoryStorage();
+  const errors = [];
+  const genericErrors = [];
+  const redirectError = { errorCode: 'access_denied' };
+  const msal = fakeMsal({ accounts: [selected], redirectError });
+  const authentication = createAuthentication({
+    configuration,
+    createPublicClientApplication: msal.createPublicClientApplication,
+  });
+  storage.setItem('after-party.permission-verification', JSON.stringify({
+    accountId: selected.homeAccountId,
+    tenantId: selected.tenantId,
+    callback: { accountId: selected.homeAccountId, tenantId: selected.tenantId },
+    createdAt: 1_000,
+    scopes: ['User.Read'],
+  }));
+  const view = {
+    setInstallationBusy() {},
+    renderInstallation() {},
+    renderInstallationError: (message, options) => errors.push({ message, options }),
+    renderError: (message) => genericErrors.push(message),
+  };
+  const controller = createInstallationController({
+    authentication,
+    installation: {},
+    scopes: ['User.Read'],
+    storage,
+    now: () => 1_000,
+    view,
+    currentUrl: () => 'https://example.test/',
+  });
+
+  const authenticationState = await authentication.initialize();
+  assert.equal(handleAuthenticationRedirectError({
+    authenticationState,
+    installationController: controller,
+    view,
+  }), true);
+  assert.match(errors[0].message, /verification was cancelled/i);
+  assert.doesNotMatch(errors[0].message, /permissions were not granted/i);
+  assert.equal(errors[0].options.verificationAction, 'continue');
+  assert.deepEqual(genericErrors, []);
+  assert.ok(storage.getItem('after-party.permission-verification'));
+});
+
+test('verification errors keep approval hidden and expose the correct view action', () => {
+  const ids = [
+    'auth-status',
+    'connect-tenant',
+    'sign-out',
+    'approve-permissions',
+    'continue-verification',
+    'installation-status',
+    'permission-summary',
+    'account-picker',
+    'account-select',
+    'use-account',
+    'account-details',
+    'account-name',
+    'account-username',
+    'tenant-id',
+  ];
+  const elements = new Map(ids.map((id) => [id, {
+    dataset: {},
+    disabled: false,
+    hidden: false,
+    textContent: '',
+    replaceChildren() {},
+  }]));
+  const view = createView({
+    getElementById: (id) => elements.get(id) ?? null,
+    createElement: () => ({ textContent: '', value: '' }),
+  });
+  view.render({ status: 'signed-in', account: account(), accounts: [account()] });
+  view.renderInstallation({ status: 'verification-required', tenantId: 'tenant-1' });
+
+  view.renderInstallationError('Permission verification was cancelled.', {
+    verificationAction: 'continue',
+  });
+  assert.equal(elements.get('approve-permissions').hidden, true);
+  assert.equal(elements.get('continue-verification').hidden, false);
+  assert.equal(
+    elements.get('continue-verification').textContent,
+    'Continue permission verification',
+  );
+
+  view.renderInstallationError('The verification continuation expired.', {
+    verificationAction: 'restart',
+  });
+  assert.equal(elements.get('approve-permissions').hidden, true);
+  assert.equal(elements.get('continue-verification').hidden, false);
+  assert.equal(
+    elements.get('continue-verification').textContent,
+    'Restart permission verification',
+  );
 });

@@ -10,6 +10,17 @@ import {
 import { createAzureRuntimeInstaller } from './azure-runtime.js';
 import { mountRuntimeCards } from './runtime-cards.js';
 
+const VERIFICATION_STATE_KEY = 'after-party.permission-verification';
+const VERIFICATION_STATE_LIFETIME_MS = 10 * 60 * 1000;
+
+function formatVerificationRedirectError(error) {
+  const code = String(error?.errorCode || error?.code || '').toLowerCase();
+  if (code === 'user_cancelled' || code === 'access_denied') {
+    return 'Permission verification was cancelled. Approved tenant permissions were not changed.';
+  }
+  return formatAuthenticationError(error);
+}
+
 export function createSignInController({ authentication, view }) {
   async function run(action) {
     view.setBusy(true);
@@ -41,8 +52,67 @@ export function createInstallationController({
   scopes,
   view,
   currentUrl,
+  storage,
+  now = () => Date.now(),
 }) {
-  async function run(action) {
+  const expectedScopes = [...scopes];
+
+  function accountIdentity(account) {
+    const accountId = String(account?.homeAccountId || '');
+    const tenantId = String(account?.tenantId || '').toLowerCase();
+    if (!accountId || !tenantId) throw { code: 'account_mismatch' };
+    return { accountId, tenantId };
+  }
+
+  function savePending(account, callback) {
+    const identity = accountIdentity(account);
+    if (callback && (
+      callback.accountId !== identity.accountId ||
+      String(callback.tenantId || '').toLowerCase() !== identity.tenantId
+    )) throw { code: 'account_mismatch' };
+    storage?.setItem(VERIFICATION_STATE_KEY, JSON.stringify({
+      ...identity,
+      callback: callback || null,
+      createdAt: now(),
+      scopes: expectedScopes,
+    }));
+  }
+
+  function pendingFor(account, required = false) {
+    const serialized = storage?.getItem(VERIFICATION_STATE_KEY);
+    if (!serialized) {
+      if (required) throw { code: 'verification_state_missing' };
+      return null;
+    }
+    let pending;
+    try {
+      pending = JSON.parse(serialized);
+    } catch {
+      storage.removeItem(VERIFICATION_STATE_KEY);
+      throw { code: 'verification_state_mismatch' };
+    }
+    const identity = accountIdentity(account);
+    const age = now() - pending.createdAt;
+    if (!Number.isFinite(pending.createdAt) || age < 0 || age > VERIFICATION_STATE_LIFETIME_MS) {
+      storage.removeItem(VERIFICATION_STATE_KEY);
+      throw { code: 'verification_state_expired' };
+    }
+    if (
+      pending.accountId !== identity.accountId ||
+      pending.tenantId !== identity.tenantId ||
+      JSON.stringify(pending.scopes) !== JSON.stringify(expectedScopes)
+    ) {
+      storage.removeItem(VERIFICATION_STATE_KEY);
+      throw { code: 'verification_state_mismatch' };
+    }
+    return pending;
+  }
+
+  async function run(
+    action,
+    formatError = formatInstallationError,
+    renderError = (message) => view.renderInstallationError(message),
+  ) {
     view.setInstallationBusy(true);
     try {
       const state = await action();
@@ -51,7 +121,7 @@ export function createInstallationController({
       }
       return state;
     } catch (error) {
-      view.renderInstallationError(formatInstallationError(error));
+      renderError(formatError(error), error);
       return null;
     } finally {
       view.setInstallationBusy(false);
@@ -67,17 +137,36 @@ export function createInstallationController({
           if (!callback) return null;
           throw { code: 'account_mismatch' };
         }
-        const accessToken = await authentication.acquireGraphToken(scopes);
-        if (!callback) {
-          return installation.verifyCurrent({
+        if (callback) storage?.removeItem(VERIFICATION_STATE_KEY);
+        const pending = callback ? null : pendingFor(authenticationState.account);
+        const verificationCallback = callback || pending?.callback || null;
+        let accessToken;
+        try {
+          accessToken = await authentication.acquireGraphToken(expectedScopes);
+        } catch (error) {
+          if (error?.code !== 'interaction_required') throw error;
+          savePending(authenticationState.account, verificationCallback);
+          return {
+            status: 'verification-required',
+            tenantId: authenticationState.account.tenantId,
+          };
+        }
+        const verified = !verificationCallback
+          ? await installation.verifyCurrent({
             account: authenticationState.account,
             accessToken,
+          })
+          : await installation.verify({
+            account: authenticationState.account,
+            accessToken,
+            callback: verificationCallback,
           });
-        }
-        return installation.verify({
-          account: authenticationState.account,
-          accessToken,
-          callback,
+        storage?.removeItem(VERIFICATION_STATE_KEY);
+        return verified;
+      }, formatInstallationError, (message, error) => {
+        const code = String(error?.code || '');
+        view.renderInstallationError(message, {
+          verificationAction: code === 'verification_state_expired' ? 'restart' : null,
         });
       }),
 
@@ -89,6 +178,56 @@ export function createInstallationController({
         }
         installation.begin(authenticationState.account);
       }),
+
+    continueVerification: () =>
+      run(async () => {
+        const authenticationState = authentication.getState();
+        if (authenticationState.status !== 'signed-in') throw { code: 'account_mismatch' };
+        try {
+          pendingFor(authenticationState.account, true);
+        } catch (error) {
+          if (!['verification_state_missing', 'verification_state_expired'].includes(error?.code)) {
+            throw error;
+          }
+          savePending(authenticationState.account, null);
+        }
+        await authentication.acquireGraphTokenRedirect(expectedScopes);
+      }, (error) =>
+        error?.code === 'account_mismatch' || String(error?.code || '').startsWith('verification_state_')
+          ? formatInstallationError(error)
+          : formatVerificationRedirectError(error),
+      (message, error) => {
+        const code = String(error?.code || '');
+        const blocked = code === 'account_mismatch' || code === 'verification_state_mismatch';
+        view.renderInstallationError(message, {
+          verificationAction: blocked ? 'none' : 'continue',
+        });
+      }),
+
+    handleRedirectError(error) {
+      const authenticationState = authentication.getState();
+      if (authenticationState.status !== 'signed-in') return false;
+      let verificationAction = 'continue';
+      let stateError = null;
+      try {
+        pendingFor(authenticationState.account, true);
+      } catch (pendingError) {
+        stateError = pendingError;
+        if (pendingError?.code === 'verification_state_missing') {
+          return false;
+        }
+        if (pendingError?.code === 'verification_state_expired') {
+          verificationAction = 'restart';
+        } else {
+          verificationAction = 'none';
+        }
+      }
+      const message = verificationAction === 'none'
+        ? formatInstallationError(stateError)
+        : formatVerificationRedirectError(error);
+      view.renderInstallationError(message, { verificationAction });
+      return true;
+    },
   };
 }
 
@@ -125,7 +264,19 @@ export function createLazyRuntimeInstaller({ authentication, configuration, fetc
   ));
 }
 
-function requiredElement(id) {
+export function handleAuthenticationRedirectError({
+  authenticationState,
+  installationController,
+  view,
+}) {
+  if (!authenticationState?.redirectError) return false;
+  if (!installationController.handleRedirectError(authenticationState.redirectError)) {
+    view.renderError(formatAuthenticationError(authenticationState.redirectError));
+  }
+  return true;
+}
+
+function requiredElement(document, id) {
   const element = document.getElementById(id);
   if (!element) {
     throw new Error(`Missing page element: ${id}`);
@@ -133,20 +284,21 @@ function requiredElement(id) {
   return element;
 }
 
-function createView() {
-  const status = requiredElement('auth-status');
-  const connect = requiredElement('connect-tenant');
-  const signOut = requiredElement('sign-out');
-  const approvePermissions = requiredElement('approve-permissions');
-  const installationStatus = requiredElement('installation-status');
-  const permissionSummary = requiredElement('permission-summary');
-  const picker = requiredElement('account-picker');
-  const select = requiredElement('account-select');
-  const useAccount = requiredElement('use-account');
-  const details = requiredElement('account-details');
-  const accountName = requiredElement('account-name');
-  const accountUsername = requiredElement('account-username');
-  const tenantId = requiredElement('tenant-id');
+export function createView(document = globalThis.document) {
+  const status = requiredElement(document, 'auth-status');
+  const connect = requiredElement(document, 'connect-tenant');
+  const signOut = requiredElement(document, 'sign-out');
+  const approvePermissions = requiredElement(document, 'approve-permissions');
+  const continueVerification = requiredElement(document, 'continue-verification');
+  const installationStatus = requiredElement(document, 'installation-status');
+  const permissionSummary = requiredElement(document, 'permission-summary');
+  const picker = requiredElement(document, 'account-picker');
+  const select = requiredElement(document, 'account-select');
+  const useAccount = requiredElement(document, 'use-account');
+  const details = requiredElement(document, 'account-details');
+  const accountName = requiredElement(document, 'account-name');
+  const accountUsername = requiredElement(document, 'account-username');
+  const tenantId = requiredElement(document, 'tenant-id');
   let busy = true;
   let installationBusy = false;
   let latestState = { status: 'signed-out' };
@@ -156,10 +308,11 @@ function createView() {
     signOut.disabled = busy;
     useAccount.disabled = busy;
     approvePermissions.disabled = busy || installationBusy;
+    continueVerification.disabled = busy || installationBusy;
   }
 
   return {
-    elements: { approvePermissions, connect, signOut, select, useAccount },
+    elements: { approvePermissions, connect, continueVerification, signOut, select, useAccount },
 
     setBusy(value) {
       busy = value;
@@ -178,6 +331,7 @@ function createView() {
       signOut.hidden = state.status !== 'signed-in';
       connect.hidden = state.status === 'signed-in';
       approvePermissions.hidden = state.status !== 'signed-in';
+      continueVerification.hidden = true;
       permissionSummary.hidden = state.status !== 'signed-in';
       if (state.status !== 'signed-in') {
         installationStatus.hidden = true;
@@ -211,20 +365,29 @@ function createView() {
     },
 
     renderInstallation(state) {
-      approvePermissions.hidden = state.status === 'installed';
-      permissionSummary.hidden = state.status === 'installed';
+      approvePermissions.hidden = ['installed', 'verification-required'].includes(state.status);
+      continueVerification.hidden = state.status !== 'verification-required';
+      continueVerification.textContent = 'Continue permission verification';
+      permissionSummary.hidden = ['installed', 'verification-required'].includes(state.status);
       installationStatus.hidden = false;
       installationStatus.textContent =
         state.status === 'installed'
           ? `Connected. After Party's lab permissions were verified for tenant ${state.tenantId}.`
-          : 'After Party is ready for permission approval.';
+          : state.status === 'verification-required'
+            ? 'Permission approval finished. Continue verification with Microsoft; approval will not repeat.'
+            : 'After Party is ready for permission approval.';
       installationStatus.dataset.kind = state.status === 'installed' ? 'success' : 'neutral';
       updateButtons();
     },
 
-    renderInstallationError(message) {
-      approvePermissions.hidden = latestState.status !== 'signed-in';
-      permissionSummary.hidden = latestState.status !== 'signed-in';
+    renderInstallationError(message, { verificationAction = null } = {}) {
+      const verificationPending = verificationAction !== null;
+      approvePermissions.hidden = verificationPending || latestState.status !== 'signed-in';
+      continueVerification.hidden = !['continue', 'restart'].includes(verificationAction);
+      continueVerification.textContent = verificationAction === 'restart'
+        ? 'Restart permission verification'
+        : 'Continue permission verification';
+      permissionSummary.hidden = verificationPending || latestState.status !== 'signed-in';
       installationStatus.hidden = false;
       installationStatus.textContent = message;
       installationStatus.dataset.kind = 'error';
@@ -237,6 +400,7 @@ function createView() {
       details.hidden = true;
       signOut.hidden = true;
       approvePermissions.hidden = true;
+      continueVerification.hidden = true;
       permissionSummary.hidden = true;
       installationStatus.hidden = true;
       connect.hidden = false;
@@ -282,7 +446,7 @@ export async function startSignInPage() {
       document,
       authentication,
       configuration: appConfiguration,
-      container: requiredElement('experiment-cards'),
+      container: requiredElement(document, 'experiment-cards'),
       installer: createLazyRuntimeInstaller({
         authentication,
         configuration: appConfiguration,
@@ -302,6 +466,7 @@ export async function startSignInPage() {
     scopes: appConfiguration.microsoftGraphDelegatedScopes,
     view,
     currentUrl: () => globalThis.location.href,
+    storage: globalThis.sessionStorage,
   });
   view.elements.connect.addEventListener('click', () => controller.signIn());
   view.elements.signOut.addEventListener('click', () => {
@@ -318,7 +483,14 @@ export async function startSignInPage() {
   view.elements.approvePermissions.addEventListener('click', () =>
     installationController.approve(),
   );
+  view.elements.continueVerification.addEventListener('click', () =>
+    installationController.continueVerification(),
+  );
   const authenticationState = await controller.initialize();
+  if (handleAuthenticationRedirectError({ authenticationState, installationController, view })) {
+    runtimeCards.reset();
+    return;
+  }
   if (authenticationState?.status !== 'signed-in') {
     runtimeCards.reset();
     return;

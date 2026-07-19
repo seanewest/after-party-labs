@@ -1,4 +1,10 @@
 const SIGN_IN_SCOPES = Object.freeze(['openid', 'profile', 'email']);
+const INTERACTION_REQUIRED_CODES = new Set([
+  'interaction_required',
+  'consent_required',
+  'login_required',
+  'no_tokens_found',
+]);
 
 function validateConfiguration(configuration) {
   if (!configuration || typeof configuration !== 'object') {
@@ -103,7 +109,7 @@ export function createAuthentication({ configuration, createPublicClientApplicat
     },
   });
 
-  async function acquireAccessToken(scopes) {
+  async function acquireAccessToken(scopes, interactionAware = false) {
     const account = client.getActiveAccount();
     if (!account || !Array.isArray(scopes) || !scopes.length) {
       throw { code: 'token_unavailable' };
@@ -118,15 +124,26 @@ export function createAuthentication({ configuration, createPublicClientApplicat
         throw new Error('Missing access token');
       }
       return response.accessToken;
-    } catch {
-      throw { code: 'token_unavailable' };
+    } catch (error) {
+      const code = String(error?.errorCode || error?.code || '').toLowerCase();
+      throw {
+        code: interactionAware && INTERACTION_REQUIRED_CODES.has(code)
+          ? 'interaction_required'
+          : 'token_unavailable',
+      };
     }
   }
 
   return {
     async initialize() {
       await client.initialize();
-      const redirectResult = await client.handleRedirectPromise();
+      let redirectResult;
+      let redirectError;
+      try {
+        redirectResult = await client.handleRedirectPromise();
+      } catch (error) {
+        redirectError = error;
+      }
       if (redirectResult?.account) {
         client.setActiveAccount(redirectResult.account);
       } else if (!client.getActiveAccount()) {
@@ -135,7 +152,8 @@ export function createAuthentication({ configuration, createPublicClientApplicat
           client.setActiveAccount(accounts[0]);
         }
       }
-      return currentState(client);
+      const state = currentState(client);
+      return redirectError ? { ...state, redirectError } : state;
     },
 
     getState() {
@@ -153,7 +171,22 @@ export function createAuthentication({ configuration, createPublicClientApplicat
       if (!Array.isArray(scopes) || scopes.some((scope) => !/^[A-Za-z][A-Za-z.]+$/.test(scope))) {
         throw { code: 'token_unavailable' };
       }
-      return acquireAccessToken(scopes);
+      return acquireAccessToken(scopes, true);
+    },
+
+    async acquireGraphTokenRedirect(scopes) {
+      if (!Array.isArray(scopes) || scopes.some((scope) => !/^[A-Za-z][A-Za-z.]+$/.test(scope))) {
+        throw { code: 'token_unavailable' };
+      }
+      const account = client.getActiveAccount();
+      if (!account) {
+        throw { code: 'token_unavailable' };
+      }
+      await client.acquireTokenRedirect({
+        account,
+        authority: `https://login.microsoftonline.com/${account.tenantId}`,
+        scopes: [...scopes],
+      });
     },
 
     async acquireRuntimeToken(scope) {

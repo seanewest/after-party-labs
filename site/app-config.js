@@ -6,6 +6,8 @@
     : productionRedirectUri;
 
   globalThis.afterPartyConfig = Object.freeze({
+    applicationDisplayName: 'After Party',
+    developerTenantId: '92563293-315c-4b6c-9b90-bcb47ee8c970',
     authentication: Object.freeze({
       clientId: '9edaa951-658e-4be2-9623-ee906cb604b2',
       authority: 'https://login.microsoftonline.com/organizations',

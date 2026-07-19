@@ -190,6 +190,45 @@ dd {
   font-size: 0.9rem;
 }
 
+.permission-summary {
+  padding: 1rem;
+  border: 1px solid #292d42;
+  border-radius: 0.65rem;
+  background: #0d101b;
+  color: #c7cbdf;
+  line-height: 1.55;
+}
+
+.permission-summary[hidden] {
+  display: none;
+}
+
+.permission-summary h3 {
+  margin: 0 0 0.5rem;
+  color: #f7f8ff;
+}
+
+.permission-summary p {
+  margin-bottom: 0.75rem;
+}
+
+.permission-summary summary {
+  cursor: pointer;
+  color: #8ee6d1;
+  font-weight: 700;
+}
+
+.permission-list {
+  columns: 2;
+  margin-bottom: 0;
+  padding-left: 1.25rem;
+}
+
+.permission-list li {
+  margin: 0.35rem 1rem 0.35rem 0;
+  break-inside: avoid;
+}
+
 .actions {
   display: flex;
   flex-wrap: wrap;
@@ -257,6 +296,10 @@ code {
   .account-picker .button,
   .actions .button {
     width: 100%;
+  }
+
+  .permission-list {
+    columns: 1;
   }
 }
 

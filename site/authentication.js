@@ -129,6 +129,26 @@ export function createAuthentication({ configuration, createPublicClientApplicat
       });
     },
 
+    async acquireGraphToken(scopes) {
+      const account = client.getActiveAccount();
+      if (!account || !Array.isArray(scopes) || !scopes.length) {
+        throw { code: 'token_unavailable' };
+      }
+      try {
+        const response = await client.acquireTokenSilent({
+          account,
+          authority: `https://login.microsoftonline.com/${account.tenantId}`,
+          scopes: [...scopes],
+        });
+        if (!response?.accessToken) {
+          throw new Error('Missing access token');
+        }
+        return response.accessToken;
+      } catch {
+        throw { code: 'token_unavailable' };
+      }
+    },
+
     selectAccount(homeAccountId) {
       const account = accountsFor(client).find(
         (candidate) => candidate.homeAccountId === homeAccountId,

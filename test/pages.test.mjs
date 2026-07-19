@@ -30,6 +30,8 @@ test('the public app configuration contains only the reviewed SPA contract', asy
   const config = JSON.parse(JSON.stringify(context.afterPartyConfig));
 
   assert.deepEqual(config, {
+    applicationDisplayName: 'After Party',
+    developerTenantId: '92563293-315c-4b6c-9b90-bcb47ee8c970',
     authentication: {
       clientId: '9edaa951-658e-4be2-9623-ee906cb604b2',
       authority: 'https://login.microsoftonline.com/organizations',
@@ -82,14 +84,28 @@ test('the public app configuration contains only the reviewed SPA contract', asy
     basePath: '/after-party-labs/',
   });
   assert.equal(await readFile(path.join(output, 'app-config.js'), 'utf8'), source);
+  assert.match(
+    await readFile(path.join(output, 'installation.js'), 'utf8'),
+    /createTenantInstallation/,
+  );
 });
 
 test('the sign-in copy distinguishes identity consent from lab permissions', async () => {
   const index = await readFile(new URL('../site/index.html', import.meta.url), 'utf8');
   const app = await readFile(new URL('../site/app.js', import.meta.url), 'utf8');
+  const configurationSource = await readFile(
+    new URL('../site/app-config.js', import.meta.url),
+    'utf8',
+  );
+  const context = { location: { origin: 'https://seanewest.github.io' } };
+  vm.runInNewContext(configurationSource, context);
 
   assert.match(index, /may add an After Party enterprise application/i);
   assert.match(index, /does not grant the lab permissions/i);
+  assert.match(index, /What approval allows/i);
+  for (const scope of context.afterPartyConfig.microsoftGraphDelegatedScopes) {
+    assert.match(index, new RegExp(`<code>${scope.replaceAll('.', '\\.')}</code>`));
+  }
   assert.match(app, /No lab-management permissions have been granted yet/);
   assert.doesNotMatch(index, /does not install After Party or change your tenant/i);
 });

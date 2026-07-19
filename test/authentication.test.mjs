@@ -6,7 +6,7 @@ import {
   describeAccount,
   formatAuthenticationError,
 } from '../site/authentication.js';
-import { createSignInController } from '../site/app.js';
+import { createInstallationController, createSignInController } from '../site/app.js';
 
 const configuration = {
   authority: 'https://login.microsoftonline.com/organizations',
@@ -51,6 +51,10 @@ function fakeMsal({ accounts = [], activeAccount = null, redirectResult = null }
     },
     async logoutRedirect(request) {
       calls.push(['logoutRedirect', request]);
+    },
+    async acquireTokenSilent(request) {
+      calls.push(['acquireTokenSilent', request]);
+      return { accessToken: 'graph-access-token' };
     },
   };
 
@@ -155,6 +159,25 @@ test('sign-out targets only the selected account', async () => {
   ]);
 });
 
+test('Graph tokens are acquired silently for the selected tenant and account', async () => {
+  const selected = account({ tenantId: '33333333-3333-3333-3333-333333333333' });
+  const msal = fakeMsal({ accounts: [selected], activeAccount: selected });
+  const authentication = createAuthentication({
+    configuration,
+    createPublicClientApplication: msal.createPublicClientApplication,
+  });
+
+  assert.equal(await authentication.acquireGraphToken(['User.Read']), 'graph-access-token');
+  assert.deepEqual(msal.calls.at(-1), [
+    'acquireTokenSilent',
+    {
+      account: selected,
+      authority: `https://login.microsoftonline.com/${selected.tenantId}`,
+      scopes: ['User.Read'],
+    },
+  ]);
+});
+
 test('account details expose identity and tenant without token data', () => {
   assert.deepEqual(describeAccount(account()), {
     displayName: 'Ada Lovelace',
@@ -243,6 +266,61 @@ test('the sign-in controller reports state transitions through a mockable view',
     ['busy', false],
     ['busy', true],
     ['error', 'Sign-in was cancelled. No lab-management permissions were granted.'],
+    ['busy', false],
+  ]);
+});
+
+test('the installation controller resumes consent for the same account and renders verification', async () => {
+  const selected = account({ tenantId: '33333333-3333-3333-3333-333333333333' });
+  const events = [];
+  const callback = {
+    accountId: selected.homeAccountId,
+    tenantId: selected.tenantId,
+  };
+  const controller = createInstallationController({
+    authentication: {
+      getState() {
+        return { status: 'signed-in', account: selected };
+      },
+      async acquireGraphToken(scopes) {
+        assert.deepEqual(scopes, ['User.Read']);
+        return 'access-token';
+      },
+    },
+    installation: {
+      consumeCallback(url) {
+        assert.equal(url, 'https://example.test/?admin_consent=True');
+        return callback;
+      },
+      async verify(input) {
+        assert.deepEqual(input, {
+          account: selected,
+          accessToken: 'access-token',
+          callback,
+        });
+        return { status: 'installed', tenantId: selected.tenantId };
+      },
+    },
+    scopes: ['User.Read'],
+    view: {
+      setInstallationBusy(value) {
+        events.push(['busy', value]);
+      },
+      renderInstallation(state) {
+        events.push(['render', state.status]);
+      },
+      renderInstallationError(message) {
+        events.push(['error', message]);
+      },
+    },
+    currentUrl: () => 'https://example.test/?admin_consent=True',
+  });
+
+  await controller.initialize();
+
+  assert.deepEqual(events, [
+    ['busy', true],
+    ['render', 'installed'],
     ['busy', false],
   ]);
 });

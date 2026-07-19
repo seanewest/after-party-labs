@@ -51,12 +51,45 @@
           </div>
         </dl>
 
+        <div id="permission-summary" class="permission-summary" hidden>
+          <h3>What approval allows</h3>
+          <p>
+            After Party requests broad delegated access for this isolated lab tenant. It can manage
+            lab users, groups, applications, directory roles, and Conditional Access; create mail,
+            files, and SharePoint activity; and read audit, reporting, and security evidence.
+          </p>
+          <details>
+            <summary>See the exact Microsoft Graph permissions</summary>
+            <ul class="permission-list">
+              <li><code>User.Read</code></li>
+              <li><code>Directory.ReadWrite.All</code></li>
+              <li><code>Application.ReadWrite.All</code></li>
+              <li><code>Group.ReadWrite.All</code></li>
+              <li><code>User.ReadWrite.All</code></li>
+              <li><code>RoleManagement.ReadWrite.Directory</code></li>
+              <li><code>Policy.ReadWrite.ConditionalAccess</code></li>
+              <li><code>AuditLog.Read.All</code></li>
+              <li><code>Reports.Read.All</code></li>
+              <li><code>Mail.ReadWrite</code></li>
+              <li><code>Mail.Send</code></li>
+              <li><code>Files.ReadWrite.All</code></li>
+              <li><code>Sites.ReadWrite.All</code></li>
+              <li><code>SecurityEvents.ReadWrite.All</code></li>
+            </ul>
+          </details>
+        </div>
+
         <div class="actions">
           <button id="connect-tenant" class="button primary" type="button" disabled>
             Connect your tenant
           </button>
+          <button id="approve-permissions" class="button primary" type="button" hidden>
+            Approve lab permissions
+          </button>
           <button id="sign-out" class="button secondary" type="button" hidden>Sign out</button>
         </div>
+
+        <div id="installation-status" class="notice" role="status" aria-live="polite" hidden></div>
 
         <p class="safety-note">
           Signing in may add an After Party enterprise application to your tenant for basic

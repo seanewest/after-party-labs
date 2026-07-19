@@ -58,7 +58,9 @@ The multitenant app registration is the shared doorway. It should not become a c
 
 A student visits the official GitHub Pages SPA and signs into the multitenant After Party application using an administrator account for the tenant they want to use. The student's first identity consent may create an After Party enterprise application in that tenant with only the basic sign-in grants.
 
-The later installation step requests the explicit lab-management permissions. It reuses the same enterprise application and verifies the required grants before reporting the tenant as installed.
+The later installation step sends the signed-in administrator to that tenant's Microsoft admin-consent endpoint for the reviewed delegated permissions. It reuses the same enterprise application and returns through one-time browser state tied to the original account and tenant.
+
+After consent, the SPA checks Microsoft Graph before reporting success. It requires exactly one service principal for the configured After Party client ID, with the expected developer tenant, display name, and `Application` type. It also requires the complete tenant-wide delegated permission grant and rejects app-only grants. Because newly consented objects can take a few seconds to appear in Microsoft Graph, the check retries briefly while otherwise failing closed on a wrong or duplicate object.
 
 The signed-in operator can then use the SPA to:
 

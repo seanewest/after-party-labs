@@ -87,6 +87,29 @@ The public, non-secret SPA settings live in [`site/app-config.js`](../site/app-c
 published and local sites use the same client ID and select the appropriate registered redirect
 URI. A client ID identifies the application; it is not a credential.
 
+## Install it in a student tenant
+
+The student installation does not create another app registration. A tenant administrator signs
+in to the SPA, reviews the permission list, and approves it through Microsoft's tenant-specific
+admin-consent page. Microsoft creates or updates the local **enterprise application** (service
+principal) derived from the developer registration.
+
+The SPA reports the tenant as connected only after Microsoft Graph confirms:
+
+- exactly one enterprise application has the configured client ID, `After Party` name,
+  `Application` type, and expected developer tenant;
+- its tenant-wide delegated grant contains every reviewed permission; and
+- it has no app-only role assignments.
+
+The return is bound to the same browser session, account, and tenant that started approval. The
+SPA retries briefly for normal Microsoft Graph propagation, and repeating approval updates the
+same enterprise application rather than creating another one.
+
+For development, the developer registration and its derived enterprise application can coexist
+in the same tenant. Once that enterprise application exists, the developer-registration
+reconciliation command above deliberately stops at its no-service-principal safety check. Remove
+the test enterprise application before running that developer bootstrap command again.
+
 ## Delete the application
 
 1. Open [Azure Cloud Shell](https://shell.azure.com/) and select **Bash**.

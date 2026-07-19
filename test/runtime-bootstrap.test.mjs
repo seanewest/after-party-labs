@@ -210,6 +210,30 @@ test('missing deployment or role-assignment capability fails before mutation', (
   );
 });
 
+test('missing environment join or identity assignment capability fails before mutation', () => {
+  for (const missingAction of [
+    'Microsoft.App/managedEnvironments/join/action',
+    'Microsoft.ManagedIdentity/userAssignedIdentities/assign/action',
+  ]) {
+    const customRole = [
+      {
+        actions: REQUIRED_CONTROL_PLANE_ACTIONS.filter((action) => action !== missingAction),
+        notActions: [],
+      },
+    ];
+
+    assert.throws(
+      () =>
+        createRuntimePlan({
+          request: request(),
+          evidence: evidence({ permissions: customRole }),
+        }),
+      (error) => error.code === 'insufficient_role',
+      missingAction,
+    );
+  }
+});
+
 test('plans require a full commit and digest-pinned public image', () => {
   for (const [field, value, code] of [
     ['commit', 'abc123', 'commit_invalid'],

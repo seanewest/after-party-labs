@@ -225,6 +225,8 @@ export async function startSignInPage() {
         displayName: appConfiguration.applicationDisplayName,
         redirectUri: configuration.redirectUri,
         scopes: appConfiguration.microsoftGraphDelegatedScopes,
+        azureManagementAppId: '797f4846-ba00-4fd7-ba43-dac1f8f63013',
+        azureManagementScope: 'user_impersonation',
       },
       storage: globalThis.sessionStorage,
       navigate: (url) => globalThis.location.assign(url),

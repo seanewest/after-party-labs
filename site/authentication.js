@@ -163,6 +163,13 @@ export function createAuthentication({ configuration, createPublicClientApplicat
       return acquireAccessToken([scope]);
     },
 
+    async acquireAzureManagementToken(scope) {
+      if (scope !== 'https://management.core.windows.net//user_impersonation') {
+        throw { code: 'token_unavailable' };
+      }
+      return acquireAccessToken([scope]);
+    },
+
     selectAccount(homeAccountId) {
       const account = accountsFor(client).find(
         (candidate) => candidate.homeAccountId === homeAccountId,

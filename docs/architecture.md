@@ -106,7 +106,12 @@ The multitenant application is used for:
 - authorizing requests from the SPA to the tenant-side API;
 - acting as the OAuth client when a simulated user must authenticate.
 
-During this exploratory stage, its permissions may be broader than the eventual product requires. Permissions should remain explicit and reviewable, but premature least-privilege work should not dominate the architecture.
+During this exploratory stage, its permissions are intentionally broader than the eventual product
+requires. The same public SPA identity requests the broad Microsoft Graph matrix plus delegated
+Azure Service Management `user_impersonation`, allowing it to inspect and manage Azure resources as
+the signed-in operator. Azure RBAC still limits which subscriptions and actions that operator can
+use. Permissions remain explicit and reviewable, but this pass does not repeatedly stop for
+least-privilege decisions that belong to later hardening.
 
 The static site receives the application's public client ID, organizational authority, redirect
 URI, and reviewed delegated-scope list through public configuration. These values identify the

@@ -202,6 +202,30 @@ test('runtime tokens are requested only for the reviewed After Party API scope',
   );
 });
 
+test('Azure management tokens use only the reviewed broad delegated scope', async () => {
+  const selected = account({ tenantId: '33333333-3333-3333-3333-333333333333' });
+  const msal = fakeMsal({ accounts: [selected], activeAccount: selected });
+  const authentication = createAuthentication({
+    configuration,
+    createPublicClientApplication: msal.createPublicClientApplication,
+  });
+  const scope = 'https://management.core.windows.net//user_impersonation';
+
+  assert.equal(await authentication.acquireAzureManagementToken(scope), 'graph-access-token');
+  assert.deepEqual(msal.calls.at(-1), [
+    'acquireTokenSilent',
+    {
+      account: selected,
+      authority: `https://login.microsoftonline.com/${selected.tenantId}`,
+      scopes: [scope],
+    },
+  ]);
+  await assert.rejects(
+    authentication.acquireAzureManagementToken('https://management.azure.com/.default'),
+    (error) => error.code === 'token_unavailable',
+  );
+});
+
 test('account details expose identity and tenant without token data', () => {
   assert.deepEqual(describeAccount(account()), {
     displayName: 'Ada Lovelace',

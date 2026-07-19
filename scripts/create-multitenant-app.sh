@@ -18,6 +18,8 @@
   LOCAL_SPA_REDIRECT_URI='http://127.0.0.1:4173/'
   graph_applications_url='https://graph.microsoft.com/v1.0/applications'
   microsoft_graph_app_id='00000003-0000-0000-c000-000000000000'
+  azure_service_management_app_id='797f4846-ba00-4fd7-ba43-dac1f8f63013'
+  azure_service_management_permission_id='41094075-9dad-400e-a0bd-54e686782033'
   runtime_api_scope_id='5c9bfc9c-4f2e-477d-a572-3d7fabe8542d'
   runtime_api_scope_name='AfterParty.Operate'
   microsoft_graph_permission_names=(
@@ -98,7 +100,7 @@
     fi
     resource_access+="{\"id\":\"$permission_id\",\"type\":\"Scope\"}"
   done
-  required_resource_access="[{\"resourceAppId\":\"$microsoft_graph_app_id\",\"resourceAccess\":[$resource_access]}]"
+  required_resource_access="[{\"resourceAppId\":\"$microsoft_graph_app_id\",\"resourceAccess\":[$resource_access]},{\"resourceAppId\":\"$azure_service_management_app_id\",\"resourceAccess\":[{\"id\":\"$azure_service_management_permission_id\",\"type\":\"Scope\"}]}]"
   expected_permission_ids="$(
     printf '%s\n' "${microsoft_graph_permission_ids[@]}" | sort | paste -sd, -
   )"
@@ -278,6 +280,13 @@
         --output tsv \
         --only-show-errors 2>/dev/null || true
     )"
+    actual_azure_management_permission_ids="$(
+      az ad app show \
+        --id "$target_app_id" \
+        --query "join(',', sort(requiredResourceAccess[?resourceAppId == '$azure_service_management_app_id'].resourceAccess[].id[]))" \
+        --output tsv \
+        --only-show-errors 2>/dev/null || true
+    )"
     actual_identifier_uri="$(
       az ad app show \
         --id "$target_app_id" \
@@ -309,6 +318,7 @@
     if [[ "$actual_audience" == 'AzureADMultipleOrgs' &&
           "$actual_redirect_uris" == "$expected_redirect_uris" &&
           "$actual_permission_ids" == "$expected_permission_ids" &&
+          "$actual_azure_management_permission_ids" == "$azure_service_management_permission_id" &&
           "$actual_identifier_uri" == "api://$target_app_id" &&
           "$actual_token_version" == '2' &&
           "$actual_runtime_scope_id" == "$runtime_api_scope_id" &&
@@ -352,6 +362,8 @@
   printf 'Graph token expires: %s\n' "$token_expiry"
   printf '\nConfigured %s delegated Microsoft Graph permissions:\n' "${#microsoft_graph_permission_names[@]}"
   printf '  %s\n' "${microsoft_graph_permission_names[@]}"
+  printf 'Configured delegated Azure management permission:\n'
+  printf '  Azure Service Management / user_impersonation\n'
   printf 'No client secret, certificate, or service principal was created.\n'
   printf 'Save the application and tenant IDs for the delete script.\n'
 )

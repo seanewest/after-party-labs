@@ -42,6 +42,7 @@ test('the public app configuration contains only the reviewed SPA contract', asy
       local: 'http://127.0.0.1:4173/',
     },
     runtimeApiScope: 'api://9edaa951-658e-4be2-9623-ee906cb604b2/AfterParty.Operate',
+    azureResourceManagerScope: 'https://management.core.windows.net//user_impersonation',
     microsoftGraphDelegatedScopes: [
       'User.Read',
       'Directory.ReadWrite.All',
@@ -124,6 +125,8 @@ test('the sign-in copy distinguishes identity consent from lab permissions', asy
   assert.match(index, /may add an After Party enterprise application/i);
   assert.match(index, /does not grant the lab permissions/i);
   assert.match(index, /What approval allows/i);
+  assert.match(index, /Azure Service Management \/ user_impersonation/);
+  assert.match(index, /manage\s+Azure resources.*Azure RBAC/is);
   for (const scope of context.afterPartyConfig.microsoftGraphDelegatedScopes) {
     assert.match(index, new RegExp(`<code>${scope.replaceAll('.', '\\.')}</code>`));
   }

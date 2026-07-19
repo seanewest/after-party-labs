@@ -18,6 +18,7 @@
       local: localRedirectUri,
     }),
     runtimeApiScope: 'api://9edaa951-658e-4be2-9623-ee906cb604b2/AfterParty.Operate',
+    azureResourceManagerScope: 'https://management.core.windows.net//user_impersonation',
     microsoftGraphDelegatedScopes: Object.freeze([
       'User.Read',
       'Directory.ReadWrite.All',

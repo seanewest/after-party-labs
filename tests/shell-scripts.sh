@@ -140,7 +140,11 @@ case "${1:-}:${2:-}:${3:-}" in
         printf '5c9bfc9c-4f2e-477d-a572-3d7fabe8542d\n'
         ;;
       *requiredResourceAccess*)
-        printf '%s\n' "${AZ_MOCK_PERMISSION_IDS:-}"
+        if [[ "$query" == *'797f4846-ba00-4fd7-ba43-dac1f8f63013'* ]]; then
+          printf '%s\n' "${AZ_MOCK_AZURE_PERMISSION_IDS:-41094075-9dad-400e-a0bd-54e686782033}"
+        else
+          printf '%s\n' "${AZ_MOCK_PERMISSION_IDS:-}"
+        fi
         ;;
       *)
         printf 'Unexpected az ad app show query: %s\n' "$query" >&2
@@ -266,11 +270,14 @@ create_output="$(
 assert_contains "$create_output" 'Created and verified the multitenant app registration.'
 assert_contains "$create_output" "Application (client) ID: $app_id"
 assert_contains "$create_output" 'Configured 14 delegated Microsoft Graph permissions:'
+assert_contains "$create_output" 'Azure Service Management / user_impersonation'
 assert_contains "$create_output" "Runtime API scope: api://$app_id/AfterParty.Operate"
 assert_contains "$create_output" 'No client secret, certificate, or service principal was created.'
 assert_log_contains 'rest --method POST'
 assert_log_contains 'AfterParty.Operate'
 assert_log_contains 'requestedAccessTokenVersion'
+assert_log_contains '797f4846-ba00-4fd7-ba43-dac1f8f63013'
+assert_log_contains '41094075-9dad-400e-a0bd-54e686782033'
 assert_log_contains 'http://127.0.0.1:4173/'
 for permission_id in "${permission_ids[@]}"; do
   assert_log_contains "$permission_id"

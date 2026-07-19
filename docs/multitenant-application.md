@@ -65,6 +65,12 @@ tenant-owned After Party API. It is preauthorized only for the same official SPA
 scope produces a token whose audience is After Party—not Microsoft Graph—and the SPA sends that
 opaque token only to the verified tenant runtime. It is not an app-only permission or credential.
 
+The same one-time administrator consent also includes Azure Service Management delegated
+`user_impersonation`. The SPA can therefore request an Azure Resource Manager token silently after
+connection and install or repair the tenant runtime in subscriptions where that operator has the
+required Azure RBAC. This is intentionally broad for the isolated-lab exploration pass; later
+hardening will replace it with a narrower permission model.
+
 | Microsoft Graph permission | What After Party can explore |
 | --- | --- |
 | `User.Read` | Identify the signed-in account. |
@@ -81,6 +87,10 @@ opaque token only to the verified tenant runtime. It is not an app-only permissi
 | `Files.ReadWrite.All` | Create and change files the signed-in user can access. |
 | `Sites.ReadWrite.All` | Create and change SharePoint content the signed-in user can access. |
 | `SecurityEvents.ReadWrite.All` | Read and update security alerts available to the signed-in operator. |
+
+| Azure permission | What After Party can explore |
+| --- | --- |
+| Azure Service Management `user_impersonation` | Inspect and manage Azure resources as the signed-in operator, bounded by that operator's Azure RBAC. |
 
 To confirm the registration later:
 

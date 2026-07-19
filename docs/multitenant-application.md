@@ -140,15 +140,24 @@ visible. This deletes the developer-owned registration.
 Student uninstall removes the tenant-local enterprise application and its grants. It must not use
 the developer teardown command above, which deletes the shared application registration.
 
-Open Azure Cloud Shell in the student tenant and verify the signed-in tenant ID. Then review
-[`uninstall-student-enterprise-app.sh`](../scripts/uninstall-student-enterprise-app.sh) and run:
+Open a fresh Azure Cloud Shell in the student tenant, clone the repository, and check out the exact
+commit shown by the published site's `version.json`. Replace `<deployed-commit>` below with that
+full commit before running the uninstall script:
 
 ```bash
+git clone 'https://github.com/seanewest/after-party-labs.git'
+cd after-party-labs
+git checkout --detach '<deployed-commit>'
+
 AFTER_PARTY_APP_ID='9edaa951-658e-4be2-9623-ee906cb604b2' \
 EXPECTED_TENANT_ID='<student-tenant-id>' \
 CONFIRM_STUDENT_UNINSTALL='9edaa951-658e-4be2-9623-ee906cb604b2' \
 bash scripts/uninstall-student-enterprise-app.sh
 ```
+
+Verify that `git rev-parse HEAD` equals the published commit, then review
+[`uninstall-student-enterprise-app.sh`](../scripts/uninstall-student-enterprise-app.sh) before
+confirming the destructive action.
 
 The script requires exactly one enterprise application with the expected client ID, developer
 tenant, display name, and application type. It explicitly removes delegated grants and app-role

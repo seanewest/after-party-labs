@@ -15,12 +15,22 @@
   readonly expected_developer_tenant_id='92563293-315c-4b6c-9b90-bcb47ee8c970'
   readonly graph_base_url='https://graph.microsoft.com/v1.0'
   readonly uuid_pattern='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+  readonly graph_resource_id_pattern='^[A-Za-z0-9._~-]+$'
 
   require_uuid() {
     local value="$1"
     local label="$2"
     if [[ ! "$value" =~ $uuid_pattern ]]; then
       printf '%s must be a UUID.\n' "$label" >&2
+      exit 1
+    fi
+  }
+
+  require_graph_resource_id() {
+    local value="$1"
+    local label="$2"
+    if [[ -z "$value" || ! "$value" =~ $graph_resource_id_pattern ]]; then
+      printf '%s must be a non-empty URL-safe Microsoft Graph resource ID.\n' "$label" >&2
       exit 1
     fi
   }
@@ -198,7 +208,7 @@
   fi
   for grant_id in "${grant_ids[@]}"; do
     [[ -n "$grant_id" ]] || continue
-    require_uuid "$grant_id" 'OAuth permission grant ID'
+    require_graph_resource_id "$grant_id" 'OAuth permission grant ID'
     az rest \
       --method DELETE \
       --url "${graph_base_url}/oauth2PermissionGrants/${grant_id}" \
@@ -219,7 +229,7 @@
   fi
   for assignment_id in "${assignment_ids[@]}"; do
     [[ -n "$assignment_id" ]] || continue
-    require_uuid "$assignment_id" 'App role assignment ID'
+    require_graph_resource_id "$assignment_id" 'App role assignment ID'
     az rest \
       --method DELETE \
       --url "${graph_base_url}/servicePrincipals/${service_principal_id}/appRoleAssignments/${assignment_id}" \

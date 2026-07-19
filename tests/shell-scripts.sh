@@ -219,8 +219,8 @@ tenant_id='22222222-2222-2222-2222-222222222222'
 developer_tenant_id='92563293-315c-4b6c-9b90-bcb47ee8c970'
 object_id='44444444-4444-4444-4444-444444444444'
 service_principal_id='55555555-5555-5555-5555-555555555555'
-grant_id='66666666-6666-6666-6666-666666666666'
-assignment_id='77777777-7777-7777-7777-777777777777'
+grant_id='l5eW7x0ga0-WDOntXzHateQDNpSH5-lPk9HjD3Sarjk'
+assignment_id='QVzct6doFkStXRSoh_HGZcTUnzAfhaVGjK7Cv0gMgUsj54JH9PTzSqduJeO6sNiW'
 redirect_uri='https://example.test/after-party/'
 permission_ids=(
   'e1fe6dd8-ba31-4d61-89e7-88639da4683d'
@@ -527,6 +527,27 @@ assert_log_excludes 'rest --method DELETE'
 assert_log_excludes 'ad sp delete'
 assert_log_excludes 'ad app delete'
 printf 'PASS: student uninstall stops before deletion when grant discovery fails\n'
+
+: >"$AZ_MOCK_LOG"
+if student_uninstall_unsafe_grant_id_output="$(
+  env \
+    PATH="$mock_path" \
+    AFTER_PARTY_APP_ID="$app_id" \
+    EXPECTED_TENANT_ID="$developer_tenant_id" \
+    CONFIRM_STUDENT_UNINSTALL="$app_id" \
+    AZ_MOCK_TENANT_ID="$developer_tenant_id" \
+    AZ_MOCK_APP_REGISTRATION_COUNT=1 \
+    AZ_MOCK_SP_COUNT=1 \
+    AZ_MOCK_GRANT_IDS='../unexpected' \
+    bash scripts/uninstall-student-enterprise-app.sh 2>&1
+)"; then
+  fail 'student uninstall accepted an unsafe Graph grant ID'
+fi
+assert_contains "$student_uninstall_unsafe_grant_id_output" 'URL-safe Microsoft Graph resource ID'
+assert_log_excludes 'rest --method DELETE'
+assert_log_excludes 'ad sp delete'
+assert_log_excludes 'ad app delete'
+printf 'PASS: student uninstall rejects unsafe Graph resource IDs before deletion\n'
 
 : >"$AZ_MOCK_LOG"
 if student_uninstall_registration_loss_output="$(

@@ -99,6 +99,11 @@ The multitenant application is used for:
 
 During this exploratory stage, its permissions may be broader than the eventual product requires. Permissions should remain explicit and reviewable, but premature least-privilege work should not dominate the architecture.
 
+The static site receives the application's public client ID, organizational authority, redirect
+URI, and reviewed delegated-scope list through public configuration. These values identify the
+OAuth client and are not credentials. Student consent, rather than the static configuration,
+creates the enterprise application and grants delegated access in a student tenant.
+
 The SPA is a public client. It must never contain:
 
 - client secrets;

@@ -178,6 +178,9 @@ review, move the Story to Review and leave this comment:
 An agent that did not draft the proposal claims the review with a signed comment. The Story's Agent
 remains blank. The reviewer checks that:
 
+"Reviewed" means the review occurred, not that the proposal was approved; always report the verdict
+as approved, changes requested, or waiting for human.
+
 - the outcome and acceptance criteria are clear and testable;
 - the Tasks cover the outcome without unnecessary scope;
 - parallel Tasks have independent ownership boundaries;

@@ -100,7 +100,7 @@ test('unknown server errors and raw failures become fixed safe messages', async 
     'Your After Party session expired. Sign in again.',
   );
   assert.equal(
-    formatRuntimeApiError(new Error('tenant secret')), 
+    formatRuntimeApiError(new Error('tenant secret')),
     'After Party could not call the tenant runtime.',
   );
 });

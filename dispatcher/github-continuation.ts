@@ -22,6 +22,15 @@ export const GITHUB_CONTINUATION_OUTCOMES = [
 export type GitHubContinuationOutcome =
   (typeof GITHUB_CONTINUATION_OUTCOMES)[number];
 
+export type GitHubContinuationDecision = "queue" | "fail";
+
+export interface GitHubContinuationDecisionEvidence {
+  reason: string;
+  observedHead: string;
+  url: string;
+  checks: PullRequestCheck[];
+}
+
 export interface RegisterGitHubContinuationInput {
   repository: string;
   pullRequestNumber: number;
@@ -46,6 +55,8 @@ export interface GitHubContinuation {
   taskNumber: number;
   message: string;
   sourceUrl: string;
+  decision: GitHubContinuationDecision | null;
+  decisionEvidence: GitHubContinuationDecisionEvidence | null;
   outcome: GitHubContinuationOutcome;
   outcomeId: string | null;
   outcomeReason: string | null;
@@ -117,6 +128,8 @@ const continuationSchema = `
     task_number INTEGER NOT NULL,
     message TEXT NOT NULL,
     source_url TEXT NOT NULL,
+    terminal_decision TEXT CHECK (terminal_decision IN ('queue', 'fail')),
+    decision_evidence_json TEXT,
     outcome TEXT NOT NULL CHECK (outcome IN (
       'pending', 'queued', 'failed'
     )),
@@ -146,6 +159,7 @@ export class GitHubContinuationStore {
     this.databasePath = databasePath;
     this.#database = new DatabaseSync(databasePath);
     this.#database.exec(continuationSchema);
+    this.#migrateDecisionColumns();
     this.#now = options.now ?? Date.now;
   }
 
@@ -241,7 +255,43 @@ export class GitHubContinuationStore {
     return rows.map(mapContinuation);
   }
 
-  markOutcome(
+  claimDecision(
+    id: string,
+    decision: GitHubContinuationDecision,
+    evidence: GitHubContinuationDecisionEvidence,
+  ): GitHubContinuation {
+    if (decision !== "queue" && decision !== "fail") {
+      throw new GitHubContinuationError(
+        `Invalid continuation decision "${decision}".`,
+      );
+    }
+    const continuationId = nonEmpty(id, "continuation ID");
+    const normalizedEvidence = validateDecisionEvidence(evidence);
+    const now = this.#now();
+    this.#database
+      .prepare(`
+        UPDATE github_continuations
+        SET terminal_decision = ?, decision_evidence_json = ?,
+            updated_at = ?, triggered_at = ?
+        WHERE id = ? AND outcome = 'pending' AND terminal_decision IS NULL
+      `)
+      .run(
+        decision,
+        JSON.stringify(normalizedEvidence),
+        now,
+        now,
+        continuationId,
+      );
+    const continuation = this.get(continuationId);
+    if (!continuation) {
+      throw new GitHubContinuationError(
+        `GitHub continuation "${continuationId}" does not exist.`,
+      );
+    }
+    return continuation;
+  }
+
+  finishDecision(
     id: string,
     outcome: Exclude<GitHubContinuationOutcome, "pending">,
     outcomeId: string | null,
@@ -256,16 +306,51 @@ export class GitHubContinuationStore {
       .prepare(`
         UPDATE github_continuations
         SET outcome = ?, outcome_id = ?, outcome_reason = ?,
-            updated_at = ?, triggered_at = ?
+            updated_at = ?
         WHERE id = ? AND outcome = 'pending'
+          AND terminal_decision = ?
       `)
-      .run(outcome, outcomeId, nonEmpty(reason, "outcome reason"), now, now, continuationId);
+      .run(
+        outcome,
+        outcomeId,
+        nonEmpty(reason, "outcome reason"),
+        now,
+        continuationId,
+        outcome === "queued" ? "queue" : "fail",
+      );
     if (Number(result.changes) === 0 && !this.get(continuationId)) {
       throw new GitHubContinuationError(
         `GitHub continuation "${continuationId}" does not exist.`,
       );
     }
     return this.get(continuationId)!;
+  }
+
+  #migrateDecisionColumns(): void {
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      const columns = new Set(
+        (
+          this.#database.prepare("PRAGMA table_info(github_continuations)").all() as Array<{
+            name: string;
+          }>
+        ).map((column) => column.name),
+      );
+      if (!columns.has("terminal_decision")) {
+        this.#database.exec(
+          "ALTER TABLE github_continuations ADD COLUMN terminal_decision TEXT CHECK (terminal_decision IN ('queue', 'fail'))",
+        );
+      }
+      if (!columns.has("decision_evidence_json")) {
+        this.#database.exec(
+          "ALTER TABLE github_continuations ADD COLUMN decision_evidence_json TEXT",
+        );
+      }
+      this.#database.exec("COMMIT");
+    } catch (error) {
+      this.#database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   #getByRegistrationKey(registrationKey: string): GitHubContinuation | null {
@@ -303,7 +388,16 @@ export class GitHubContinuationPoller {
     };
     const snapshots = new Map<string, PullRequestTransitionState | Error>();
 
-    for (const continuation of continuations) {
+    for (const listedContinuation of continuations) {
+      if (listedContinuation.decision) {
+        this.#recordCompletion(
+          this.#completeDecision(listedContinuation),
+          result,
+        );
+        continue;
+      }
+
+      const continuation = listedContinuation;
       const key = pullRequestKey(continuation);
       let snapshot = snapshots.get(key);
       if (!snapshot) {
@@ -319,6 +413,11 @@ export class GitHubContinuationPoller {
       }
 
       if (snapshot instanceof Error) {
+        const current = this.#store.get(continuation.id);
+        if (current?.decision) {
+          this.#recordCompletion(this.#completeDecision(current), result);
+          continue;
+        }
         result.sourceFailures += 1;
         result.pending += 1;
         this.#queue.createEscalation({
@@ -340,28 +439,53 @@ export class GitHubContinuationPoller {
       }
 
       if (snapshot.head.toLowerCase() !== continuation.expectedHead.toLowerCase()) {
-        this.#fail(
-          continuation,
-          `Expected head ${continuation.expectedHead}, but GitHub reports ${snapshot.head}.`,
-          snapshot,
+        const claimed = this.#store.claimDecision(
+          continuation.id,
+          "fail",
+          decisionEvidence(
+            snapshot,
+            `Expected head ${continuation.expectedHead}, but GitHub reports ${snapshot.head}.`,
+          ),
         );
-        result.failed += 1;
-        result.escalated += 1;
+        this.#recordCompletion(this.#completeDecision(claimed), result);
         continue;
       }
 
       const transition = evaluateTransition(continuation, snapshot);
       if (transition.kind === "pending") {
-        result.pending += 1;
+        const current = this.#store.get(continuation.id);
+        if (current?.decision) {
+          this.#recordCompletion(this.#completeDecision(current), result);
+        } else if (current?.outcome === "pending") {
+          result.pending += 1;
+        }
         continue;
       }
-      if (transition.kind === "failed") {
-        this.#fail(continuation, transition.reason, snapshot);
-        result.failed += 1;
-        result.escalated += 1;
-        continue;
-      }
+      const claimed = this.#store.claimDecision(
+        continuation.id,
+        transition.kind === "queued" ? "queue" : "fail",
+        decisionEvidence(snapshot, transition.reason),
+      );
+      this.#recordCompletion(this.#completeDecision(claimed), result);
+    }
+    return result;
+  }
 
+  #completeDecision(continuation: GitHubContinuation): {
+    outcome: "queued" | "failed";
+    escalated: number;
+  } | null {
+    if (continuation.outcome !== "pending") {
+      return null;
+    }
+    const evidence = continuation.decisionEvidence;
+    if (!continuation.decision || !evidence) {
+      throw new GitHubContinuationError(
+        `Continuation "${continuation.id}" has an incomplete terminal decision.`,
+      );
+    }
+
+    if (continuation.decision === "queue") {
       const message = this.#queue.enqueue({
         sender: continuation.registeredBy,
         recipient: continuation.recipient,
@@ -374,7 +498,7 @@ export class GitHubContinuationPoller {
           expectedHead: continuation.expectedHead,
           event: continuation.event,
           taskNumber: continuation.taskNumber,
-          checks: snapshot.checks.map((check) => ({
+          checks: evidence.checks.map((check) => ({
             name: check.name,
             completed: check.completed,
             result: check.result,
@@ -382,16 +506,9 @@ export class GitHubContinuationPoller {
         },
         dedupeKey: `github-continuation:${continuation.id}`,
         correlationId: `github:${continuation.repository}:pull:${continuation.pullRequestNumber}`,
-        sourceUrl: snapshot.url,
+        sourceUrl: evidence.url,
       });
-      this.#store.markOutcome(
-        continuation.id,
-        "queued",
-        message.id,
-        transition.reason,
-      );
-      result.queued += 1;
-
+      let escalated = 0;
       const worker = this.#queue.getWorker(continuation.recipient);
       if (worker.availability === "unavailable") {
         this.#queue.createEscalation({
@@ -407,19 +524,19 @@ export class GitHubContinuationPoller {
             taskNumber: continuation.taskNumber,
           },
           dedupeKey: `github-continuation-worker:${continuation.id}`,
-          sourceUrl: snapshot.url,
+          sourceUrl: evidence.url,
         });
-        result.escalated += 1;
+        escalated = 1;
       }
+      this.#store.finishDecision(
+        continuation.id,
+        "queued",
+        message.id,
+        evidence.reason,
+      );
+      return { outcome: "queued", escalated };
     }
-    return result;
-  }
 
-  #fail(
-    continuation: GitHubContinuation,
-    reason: string,
-    snapshot: PullRequestTransitionState,
-  ): void {
     const escalation = this.#queue.createEscalation({
       kind: "delivery_failure",
       requestedBy: "morpheus",
@@ -432,13 +549,30 @@ export class GitHubContinuationPoller {
         taskNumber: continuation.taskNumber,
         event: continuation.event,
         expectedHead: continuation.expectedHead,
-        observedHead: snapshot.head,
-        reason,
+        observedHead: evidence.observedHead,
+        reason: evidence.reason,
       },
       dedupeKey: `github-continuation-failed:${continuation.id}`,
-      sourceUrl: snapshot.url,
+      sourceUrl: evidence.url,
     });
-    this.#store.markOutcome(continuation.id, "failed", escalation.id, reason);
+    this.#store.finishDecision(
+      continuation.id,
+      "failed",
+      escalation.id,
+      evidence.reason,
+    );
+    return { outcome: "failed", escalated: 1 };
+  }
+
+  #recordCompletion(
+    completion: { outcome: "queued" | "failed"; escalated: number } | null,
+    result: GitHubContinuationPollResult,
+  ): void {
+    if (!completion) {
+      return;
+    }
+    result[completion.outcome] += 1;
+    result.escalated += completion.escalated;
   }
 }
 
@@ -480,6 +614,18 @@ function evaluateTransition(
       snapshot.checks.length === 0
         ? "GitHub has not reported any checks for the expected head."
         : "At least one check is still running.",
+  };
+}
+
+function decisionEvidence(
+  snapshot: PullRequestTransitionState,
+  reason: string,
+): GitHubContinuationDecisionEvidence {
+  return {
+    reason,
+    observedHead: snapshot.head,
+    url: snapshot.url,
+    checks: snapshot.checks,
   };
 }
 
@@ -556,6 +702,13 @@ function sameRegistration(
 }
 
 function mapContinuation(row: ContinuationRow): GitHubContinuation {
+  const decisionValue = nullableString(row.terminal_decision);
+  if (decisionValue && decisionValue !== "queue" && decisionValue !== "fail") {
+    throw new GitHubContinuationError(
+      `Stored continuation has invalid decision "${decisionValue}".`,
+    );
+  }
+  const decision = decisionValue as GitHubContinuationDecision | null;
   return {
     id: String(row.id),
     registrationKey: String(row.registration_key),
@@ -568,6 +721,8 @@ function mapContinuation(row: ContinuationRow): GitHubContinuation {
     taskNumber: Number(row.task_number),
     message: String(row.message),
     sourceUrl: String(row.source_url),
+    decision,
+    decisionEvidence: parseDecisionEvidence(row.decision_evidence_json),
     outcome: String(row.outcome) as GitHubContinuationOutcome,
     outcomeId: nullableString(row.outcome_id),
     outcomeReason: nullableString(row.outcome_reason),
@@ -578,6 +733,56 @@ function mapContinuation(row: ContinuationRow): GitHubContinuation {
         ? null
         : Number(row.triggered_at),
   };
+}
+
+function validateDecisionEvidence(
+  evidence: GitHubContinuationDecisionEvidence,
+): GitHubContinuationDecisionEvidence {
+  if (!evidence || typeof evidence !== "object") {
+    throw new GitHubContinuationError("Decision evidence must be an object.");
+  }
+  if (!Array.isArray(evidence.checks)) {
+    throw new GitHubContinuationError("Decision evidence checks must be an array.");
+  }
+  return {
+    reason: nonEmpty(evidence.reason, "decision reason"),
+    observedHead: nonEmpty(evidence.observedHead, "observed head"),
+    url: nonEmpty(evidence.url, "decision source URL"),
+    checks: evidence.checks.map((check) => {
+      if (!check || typeof check !== "object" || typeof check.completed !== "boolean") {
+        throw new GitHubContinuationError("Decision evidence contains an invalid check.");
+      }
+      return {
+        name: nonEmpty(check.name, "check name"),
+        completed: check.completed,
+        result:
+          check.result === null
+            ? null
+            : nonEmpty(check.result, "check result"),
+      };
+    }),
+  };
+}
+
+function parseDecisionEvidence(
+  value: SqlValue | undefined,
+): GitHubContinuationDecisionEvidence | null {
+  const serialized = nullableString(value);
+  if (!serialized) {
+    return null;
+  }
+  try {
+    return validateDecisionEvidence(
+      JSON.parse(serialized) as GitHubContinuationDecisionEvidence,
+    );
+  } catch (error) {
+    if (error instanceof GitHubContinuationError) {
+      throw error;
+    }
+    throw new GitHubContinuationError(
+      `Stored continuation decision evidence is invalid JSON: ${String(error)}`,
+    );
+  }
 }
 
 function pullRequestKey(value: {

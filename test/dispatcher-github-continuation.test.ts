@@ -164,24 +164,148 @@ test("a crash after enqueue is recovered by the continuation dedupe key", async 
     const store = new GitHubContinuationStore(state.databasePath, { now: state.now });
     const queue = new DispatcherQueue(state.databasePath, { now: state.now });
     const continuation = store.register(registration());
+    store.claimDecision(continuation.id, "queue", {
+      reason: "PR #61 merged at the expected head.",
+      observedHead: "abc123",
+      url: "https://github.com/example/after-party/pull/61",
+      checks: [],
+    });
     const precrash = queue.enqueue({
       sender: "butthead",
       recipient: "butthead",
       payload: { text: "Accepted before the poller crashed" },
       dedupeKey: `github-continuation:${continuation.id}`,
     });
-    const source = new MemoryContinuationSource();
-    source.set(snapshot({ open: false, merged: true }));
-
-    const result = await new GitHubContinuationPoller(source, store, queue).poll();
-    assert.equal(result.queued, 1);
-    assert.equal(queue.listMessages().length, 1);
-    assert.equal(store.get(continuation.id)?.outcomeId, precrash.id);
     queue.close();
     store.close();
+
+    const reopenedStore = new GitHubContinuationStore(state.databasePath, {
+      now: state.now,
+    });
+    const reopenedQueue = new DispatcherQueue(state.databasePath, {
+      now: state.now,
+    });
+    const source = new MemoryContinuationSource();
+
+    const result = await new GitHubContinuationPoller(
+      source,
+      reopenedStore,
+      reopenedQueue,
+    ).poll();
+    assert.equal(result.queued, 1);
+    assert.equal(source.calls.length, 0);
+    assert.equal(reopenedQueue.listMessages().length, 1);
+    assert.equal(reopenedStore.get(continuation.id)?.outcomeId, precrash.id);
+    reopenedQueue.close();
+    reopenedStore.close();
   } finally {
     state.cleanup();
   }
+});
+
+async function runConflictingOverlap(
+  firstSnapshot: PullRequestTransitionState,
+  secondSnapshot: PullRequestTransitionState,
+): Promise<{
+  outcome: string | undefined;
+  decision: string | null | undefined;
+  messages: number;
+  failures: number;
+}> {
+  const state = fixture();
+  try {
+    const registeringStore = new GitHubContinuationStore(state.databasePath, {
+      now: state.now,
+    });
+    const continuation = registeringStore.register(registration());
+    registeringStore.close();
+
+    let releaseSecond!: () => void;
+    let secondEntered!: () => void;
+    const secondGate = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      secondEntered = resolve;
+    });
+    const delayedSource: GitHubContinuationSource = {
+      async getPullRequestTransitionState() {
+        secondEntered();
+        await secondGate;
+        return secondSnapshot;
+      },
+    };
+    const immediateSource: GitHubContinuationSource = {
+      async getPullRequestTransitionState() {
+        return firstSnapshot;
+      },
+    };
+    const firstStore = new GitHubContinuationStore(state.databasePath, {
+      now: state.now,
+    });
+    const secondStore = new GitHubContinuationStore(state.databasePath, {
+      now: state.now,
+    });
+    const firstQueue = new DispatcherQueue(state.databasePath, { now: state.now });
+    const secondQueue = new DispatcherQueue(state.databasePath, { now: state.now });
+
+    // The delayed poller loads the same pending row first, then observes its
+    // conflicting snapshot only after the immediate poller commits a decision.
+    const delayed = new GitHubContinuationPoller(
+      delayedSource,
+      secondStore,
+      secondQueue,
+    ).poll();
+    await entered;
+    await new GitHubContinuationPoller(
+      immediateSource,
+      firstStore,
+      firstQueue,
+    ).poll();
+    releaseSecond();
+    await delayed;
+
+    const stored = firstStore.get(continuation.id);
+    const result = {
+      outcome: stored?.outcome,
+      decision: stored?.decision,
+      messages: firstQueue.listMessages().length,
+      failures: firstQueue.listEscalations({ kind: "delivery_failure" }).length,
+    };
+    secondQueue.close();
+    firstQueue.close();
+    secondStore.close();
+    firstStore.close();
+    return result;
+  } finally {
+    state.cleanup();
+  }
+}
+
+test("conflicting overlapping snapshots cannot enqueue after a failure decision", async () => {
+  const result = await runConflictingOverlap(
+    snapshot({ head: "stale-head" }),
+    snapshot({ open: false, merged: true }),
+  );
+  assert.deepEqual(result, {
+    outcome: "failed",
+    decision: "fail",
+    messages: 0,
+    failures: 1,
+  });
+});
+
+test("conflicting overlapping snapshots cannot fail after a queue decision", async () => {
+  const result = await runConflictingOverlap(
+    snapshot({ open: false, merged: true }),
+    snapshot({ head: "stale-head" }),
+  );
+  assert.deepEqual(result, {
+    outcome: "queued",
+    decision: "queue",
+    messages: 1,
+    failures: 0,
+  });
 });
 
 test("overlapping pollers enqueue one continuation message", async () => {

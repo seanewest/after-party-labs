@@ -197,9 +197,11 @@ for the same logical registration are rejected instead of silently replacing dur
 Each scheduled `poll:github` pass groups pending registrations by pull request and reads the current
 head, merge state, and check rollup with the authenticated `gh` CLI. The expected head must match.
 Merge waits fail if the pull request closes unmerged, and check waits fail if it closes before the
-checks finish. A successful transition enqueues one message with a continuation-ID deduplication
-key. This closes the crash window between queue insertion and marking the registration complete and
-makes restarts and overlapping pollers safe.
+checks finish. Before either enqueueing or escalating, the poller atomically records one immutable
+terminal decision and the snapshot evidence behind it. Competing pollers may finish only that
+winning decision, even when they observed conflicting snapshots. Queue insertion then uses a
+continuation-ID deduplication key, so a restart can recover a claimed decision across the remaining
+enqueue-to-completion crash window without duplicating its message.
 
 Busy and sleeping recipients keep the queued message. An unavailable recipient produces a durable
 `worker_unavailable` escalation; source read errors remain pending and produce a deduplicated

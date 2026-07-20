@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const MANAGED_HOOK_DESCRIPTION =
@@ -30,7 +30,7 @@ export interface HookInstallationOptions {
 export interface HookInstallationInspection {
   status: HookInstallationStatus;
   targetPath: string;
-  command: string;
+  command: string | null;
 }
 
 export class HookInstallationError extends Error {}
@@ -63,18 +63,23 @@ export function inspectHookInstallation(
   options: HookInstallationOptions = {},
 ): HookInstallationInspection {
   const targetPath = hookTargetPath(options);
-  const desired = managedHookConfiguration(handlerPath(options));
-  const command = desired.hooks.SessionStart[0].hooks[0].command;
-  if (!existsSync(targetPath)) {
-    return { status: "missing", targetPath, command };
+  let installed: ManagedConfiguration | null = null;
+  if (existsSync(targetPath)) {
+    installed = parseManagedConfiguration(readConfiguration(targetPath));
+    if (!installed) {
+      return { status: "conflict", targetPath, command: null };
+    }
   }
 
-  const existing = readConfiguration(targetPath);
-  if (!isManagedConfiguration(existing)) {
-    return { status: "conflict", targetPath, command };
+  const desiredHandlerPath = handlerPath(options);
+  const desired = managedHookConfiguration(desiredHandlerPath);
+  const command = desired.hooks.SessionStart[0].hooks[0].command;
+  if (!installed) {
+    return { status: "missing", targetPath, command };
   }
   return {
-    status: configurationsEqual(existing, desired) ? "current" : "update_available",
+    status:
+      installed.handlerPath === desiredHandlerPath ? "current" : "update_available",
     targetPath,
     command,
   };
@@ -112,16 +117,18 @@ export function installHooks(
 export function uninstallHooks(
   options: HookInstallationOptions = {},
 ): HookInstallationInspection {
-  const inspection = inspectHookInstallation(options);
-  if (inspection.status === "conflict") {
+  const targetPath = hookTargetPath(options);
+  if (!existsSync(targetPath)) {
+    return { status: "missing", targetPath, command: null };
+  }
+  const installed = parseManagedConfiguration(readConfiguration(targetPath));
+  if (!installed) {
     throw new HookInstallationError(
-      `Refusing to remove unrelated Codex hooks at ${inspection.targetPath}.`,
+      `Refusing to remove unrelated Codex hooks at ${targetPath}.`,
     );
   }
-  if (inspection.status !== "missing") {
-    rmSync(inspection.targetPath);
-  }
-  return inspectHookInstallation(options);
+  rmSync(targetPath);
+  return { status: "missing", targetPath, command: installed.command };
 }
 
 export function resolvePrimaryCheckout(repositoryPath = moduleRepositoryPath()): string {
@@ -171,17 +178,104 @@ function readConfiguration(path: string): unknown {
   }
 }
 
-function isManagedConfiguration(value: unknown): boolean {
-  return Boolean(
-    value &&
-      typeof value === "object" &&
-      !Array.isArray(value) &&
-      (value as Record<string, unknown>).description === MANAGED_HOOK_DESCRIPTION,
+interface ManagedConfiguration {
+  command: string;
+  handlerPath: string;
+}
+
+const managedEvents = {
+  SessionStart: "Registering named After Party worker",
+  UserPromptSubmit: "Recording After Party worker activity",
+  Stop: "Completing After Party worker activity",
+} as const;
+
+function parseManagedConfiguration(value: unknown): ManagedConfiguration | null {
+  if (!hasExactKeys(value, ["description", "hooks"])) {
+    return null;
+  }
+  if (value.description !== MANAGED_HOOK_DESCRIPTION) {
+    return null;
+  }
+  if (!hasExactKeys(value.hooks, Object.keys(managedEvents))) {
+    return null;
+  }
+
+  let managedPath: string | null = null;
+  let managedCommand: string | null = null;
+  for (const [event, statusMessage] of Object.entries(managedEvents)) {
+    const entries = value.hooks[event];
+    if (!Array.isArray(entries) || entries.length !== 1) {
+      return null;
+    }
+    const entry = entries[0];
+    if (!hasExactKeys(entry, ["hooks"])) {
+      return null;
+    }
+    const hooks = entry.hooks;
+    if (!Array.isArray(hooks) || hooks.length !== 1) {
+      return null;
+    }
+    const hook = hooks[0];
+    if (!hasExactKeys(hook, ["type", "command", "statusMessage"])) {
+      return null;
+    }
+    if (
+      hook.type !== "command" ||
+      typeof hook.command !== "string" ||
+      hook.statusMessage !== statusMessage
+    ) {
+      return null;
+    }
+    const path = lifecycleHandlerPathFromCommand(hook.command);
+    if (!path || (managedPath !== null && path !== managedPath)) {
+      return null;
+    }
+    managedPath = path;
+    managedCommand = hook.command;
+  }
+
+  if (!managedPath || !managedCommand) {
+    return null;
+  }
+  return {
+    command: managedCommand,
+    handlerPath: managedPath,
+  };
+}
+
+function hasExactKeys(value: unknown, expectedKeys: string[]): value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const actualKeys = Object.keys(value).sort();
+  const sortedExpected = [...expectedKeys].sort();
+  return (
+    actualKeys.length === sortedExpected.length &&
+    actualKeys.every((key, index) => key === sortedExpected[index])
   );
 }
 
-function configurationsEqual(left: unknown, right: unknown): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+function lifecycleHandlerPathFromCommand(command: string): string | null {
+  const prefix = "/usr/bin/env node ";
+  if (!command.startsWith(prefix)) {
+    return null;
+  }
+  const argument = command.slice(prefix.length);
+  if (argument.length < 2 || !argument.startsWith("'") || !argument.endsWith("'")) {
+    return null;
+  }
+  const quoteMarker = `'"'"'`;
+  const decoded = argument.slice(1, -1).replaceAll(quoteMarker, "'");
+  const suffix = join("dispatcher", "hooks", "lifecycle.ts");
+  if (
+    shellQuote(decoded) !== argument ||
+    !isAbsolute(decoded) ||
+    resolve(decoded) !== decoded ||
+    !decoded.endsWith(`${sep}${suffix}`)
+  ) {
+    return null;
+  }
+  return decoded;
 }
 
 function shellQuote(value: string): string {

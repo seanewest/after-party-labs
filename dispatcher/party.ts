@@ -157,7 +157,9 @@ function runHookCommand(positionals: string[]): number {
   if (!result) {
     throw new Error(`Unknown hooks action "${action}". Use install, status, or uninstall.`);
   }
-  process.stdout.write(`${result.status}: ${result.targetPath}\n${result.command}\n`);
+  process.stdout.write(
+    `${result.status}: ${result.targetPath}\n${result.command ? `${result.command}\n` : ""}`,
+  );
   return result.status === "conflict" || result.status === "update_available" ? 1 : 0;
 }
 

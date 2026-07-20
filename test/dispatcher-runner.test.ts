@@ -38,7 +38,7 @@ import {
 const SESSION_A = "11111111-1111-4111-8111-111111111111";
 const SESSION_B = "22222222-2222-4222-8222-222222222222";
 const LIFECYCLE_COMMAND =
-  '/usr/bin/env node "$(git rev-parse --show-toplevel)/dispatcher/hooks/lifecycle.ts"';
+  '/usr/bin/env node "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/dispatcher/hooks/lifecycle.ts"';
 
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), "after-party-runner-"));
@@ -154,6 +154,48 @@ test("project hooks install only the reviewed named-worker lifecycle commands", 
     assert.equal(event[0]?.hooks?.length, 1);
     assert.equal(event[0]?.hooks?.[0]?.type, "command");
     assert.equal(event[0]?.hooks?.[0]?.command, LIFECYCLE_COMMAND);
+  }
+});
+
+test("project hook command resolves the primary checkout from a linked worktree", () => {
+  const directory = mkdtempSync(join(tmpdir(), "after-party-hook-path-"));
+  const primary = join(directory, "primary");
+  const linked = join(directory, "linked");
+  try {
+    assert.equal(spawnSync("git", ["init", "-q", primary]).status, 0);
+    assert.equal(
+      spawnSync("git", [
+        "-C",
+        primary,
+        "-c",
+        "user.name=After Party Test",
+        "-c",
+        "user.email=after-party-test@example.invalid",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "initial",
+      ]).status,
+      0,
+    );
+    assert.equal(
+      spawnSync("git", ["-C", primary, "worktree", "add", "-q", "-b", "linked", linked])
+        .status,
+      0,
+    );
+
+    const result = spawnSync(
+      "sh",
+      [
+        "-c",
+        'printf "%s\\n" "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/dispatcher/hooks/lifecycle.ts"',
+      ],
+      { cwd: linked, encoding: "utf8" },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), join(primary, "dispatcher", "hooks", "lifecycle.ts"));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });
 
@@ -899,6 +941,7 @@ test("party deliver runs the correlated Codex JSON stream without a manual event
     state.queue.setWorkerAvailability("beavis", "idle");
 
     const fakeCodex = join(state.directory, "codex");
+    const fakeTmux = join(state.directory, "tmux");
     const codexLog = join(state.directory, "codex.log");
     const queueUrl = pathToFileURL(join(process.cwd(), "dispatcher", "queue.ts")).href;
     writeFileSync(
@@ -930,6 +973,8 @@ if (prompt.includes("structured retry")) {
       "utf8",
     );
     chmodSync(fakeCodex, 0o755);
+    writeFileSync(fakeTmux, "#!/bin/sh\nexit 1\n", "utf8");
+    chmodSync(fakeTmux, 0o755);
     const script = join(process.cwd(), "dispatcher", "party.ts");
     let consumer = 0;
     const deliver = () => spawnSync(

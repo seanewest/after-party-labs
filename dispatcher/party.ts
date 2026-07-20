@@ -3,6 +3,11 @@
 import process from "node:process";
 import { readFileSync } from "node:fs";
 
+import {
+  inspectHookInstallation,
+  installHooks,
+  uninstallHooks,
+} from "./hook-installation.ts";
 import { defaultDispatcherDatabasePath } from "./paths.ts";
 import { DispatcherQueue } from "./queue.ts";
 import { parseAgentName } from "./registry.ts";
@@ -29,10 +34,14 @@ export async function runParty(argv = process.argv.slice(2)): Promise<number> {
     return command ? 0 : 1;
   }
 
+  if (command === "hooks") {
+    return runHookCommand(positionals);
+  }
+
   const databasePath = option(parsed, "database") ?? defaultDispatcherDatabasePath();
   const queue = new DispatcherQueue(databasePath);
   const sessions = new WorkerSessionStore(databasePath);
-  const terminal = new TmuxWorkerTerminal();
+  const terminal = new TmuxWorkerTerminal({ dispatcherDatabasePath: databasePath });
   const workerClientLock = new FlockWorkerClientLock(databasePath);
   try {
     switch (command) {
@@ -135,6 +144,23 @@ export async function runParty(argv = process.argv.slice(2)): Promise<number> {
   }
 }
 
+function runHookCommand(positionals: string[]): number {
+  const action = requiredPositional(positionals, 0, "hooks action");
+  const result =
+    action === "install"
+      ? installHooks()
+      : action === "uninstall"
+        ? uninstallHooks()
+        : action === "status"
+          ? inspectHookInstallation()
+          : null;
+  if (!result) {
+    throw new Error(`Unknown hooks action "${action}". Use install, status, or uninstall.`);
+  }
+  process.stdout.write(`${result.status}: ${result.targetPath}\n${result.command}\n`);
+  return result.status === "conflict" || result.status === "update_available" ? 1 : 0;
+}
+
 function coordinatorFor(
   parsed: ParsedArguments,
   queue: DispatcherQueue,
@@ -229,6 +255,7 @@ function delay(milliseconds: number): Promise<void> {
 const helpText = `Usage: party [options] <command>
 
 Commands:
+  hooks install|status|uninstall
   configure NAME ABSOLUTE_WORKTREE_PATH
   agents
   agent NAME

@@ -83,6 +83,7 @@ export {
 } from "./registry.ts";
 export {
   configuredWorkerNames,
+  isConfiguredWorkerCwd,
   LIFECYCLE_EVENTS,
   WorkerSessionError,
   WorkerSessionStore,

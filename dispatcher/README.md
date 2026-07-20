@@ -32,18 +32,31 @@ requires the standard `flock` command.
 
 Machine-specific worktree paths, Codex session IDs, and activity state live in
 `${XDG_STATE_HOME:-~/.local/state}/after-party/dispatcher.sqlite`, never in Git.
+Party adds only the directory containing that active database as an additional Codex writable
+directory. This keeps the normal worktree sandbox in place while allowing a named worker to create
+an outbound handoff with `party-dispatcher enqueue`; it does not grant access to the rest of the
+home directory, Git metadata, `.codex`, or the network.
 
 ## Lifecycle hook boundary
 
-The reviewed hook implementation is `hooks/lifecycle.ts`; the project-local installation is
-`../.codex/hooks.json`. Codex skips these commands until the human reviews and trusts their exact
-definitions through `/hooks`. New or changed definitions require a fresh trust review. The
-dispatcher never uses `--dangerously-bypass-hook-trust`.
+The reviewed hook implementation is `hooks/lifecycle.ts`. After updating the primary checkout to a
+reviewed commit, install its definition once at the user level:
 
-Codex loads linked-worktree hooks from the primary checkout. The installed command likewise resolves
-the Git common directory and runs the lifecycle handler from that primary checkout, so a named
-worker can remain on an older or unrelated feature branch without losing the shared hook runtime.
-The primary checkout must be updated to the reviewed commit before a changed hook is trusted.
+    npm run party -- hooks install
+
+Then open `/hooks` in Codex and trust the `SessionStart`, `UserPromptSubmit`, and `Stop` definitions.
+Use `npm run party -- hooks status` to inspect the installation or
+`npm run party -- hooks uninstall` to remove it. Codex requires a fresh trust review whenever an
+installed definition changes, and the dispatcher never uses `--dangerously-bypass-hook-trust`.
+
+The installer writes `~/.codex/hooks.json` (or `$CODEX_HOME/hooks.json`) with an absolute command
+pointing to the primary checkout. That makes the same reviewed handler available to every linked
+worktree even when a worker remains on an older or unrelated feature branch. The handler returns
+without changing dispatcher state outside configured named-worker worktrees, using a read-only
+lookup before it opens the dispatcher state for writing. To avoid running the same event twice, the
+repository does not also install project-local hooks. The installer updates or removes only a file
+it recognizes as After Party-managed and refuses to overwrite or remove any other personal hook
+configuration.
 
 The trusted `SessionStart`, `UserPromptSubmit`, and `Stop` events register the named session and set
 idle/busy state without scraping terminal output. A dispatcher prompt includes an

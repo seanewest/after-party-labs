@@ -344,3 +344,28 @@ export function configuredWorkerNames(store: WorkerSessionStore): AgentName[] {
   const configured = new Set(store.listWorkers().map((worker) => worker.name));
   return AGENT_NAMES.filter((name) => configured.has(name));
 }
+
+export function isConfiguredWorkerCwd(databasePath: string, cwd: string): boolean {
+  if (!existsSync(databasePath)) {
+    return false;
+  }
+  let normalized: string;
+  try {
+    normalized = normalizeWorktree(cwd);
+  } catch (error) {
+    if (error instanceof WorkerSessionError) {
+      return false;
+    }
+    throw error;
+  }
+
+  const database = new DatabaseSync(databasePath, { readOnly: true });
+  try {
+    const row = database
+      .prepare("SELECT 1 FROM worker_sessions WHERE worktree_path = ?")
+      .get(normalized);
+    return Boolean(row);
+  } finally {
+    database.close();
+  }
+}

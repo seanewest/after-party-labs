@@ -36,6 +36,8 @@ Avoid overengineering.
 
 All implementation, coordination, review, and live validation should be recoverable from GitHub issues, tasks, branches, pull requests, comments, and actions. Named local workers and their dispatcher may deliver work promptly, but GitHub remains authoritative; do not depend on private conversation context or unrecorded local state.
 
+When GitHub records conflict, current project fields, the current issue body, native dependency relationships, and the latest explicit human direction take precedence. Older comments are historical context and must not resurrect superseded ownership, status, dependencies, authorization requirements, or blockers.
+
 Repository changes should normally be developed on a dedicated branch and delivered through a pull request. Review findings and follow-up discussion for a pull request must be recorded on that pull request, not only in chat or a local report.
 
 If an agent knows its assigned name, it should prefix every GitHub issue comment, pull request comment or review, and pull request title with `[NAME]` (for example, `[CORNHOLIO] ...`).

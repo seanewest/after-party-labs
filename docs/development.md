@@ -346,6 +346,12 @@ returns an error, leave the GitHub handoff intact and continue or stop according
 loop; do not improvise another private routing path or repeat side effects blindly. The dispatcher
 uses stable message IDs and durable receipts, but delivery remains explicitly at least once.
 
+Unattended dispatcher turns must contain only work that can finish under their existing authority.
+Never enqueue work known to require human approval, and never let an automated worker raise an
+approval prompt. The interactive agent that owns the Task records the exact required action or
+decision on its pull request or Task, moves the Task to Waiting for Human with Current Agent clear,
+and stops until the human responds through GitHub or the direct conversation.
+
 The local operator commands, hook trust boundary, failure behavior, and recovery details are in
 [Dispatcher and named workers](../dispatcher/README.md).
 

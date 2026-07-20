@@ -71,11 +71,9 @@ export class LifecycleHandler {
   }
 
   #sessionStart(input: SessionStartHookInput): LifecycleHookOutput {
-    const worker = this.sessions.getWorkerByCwd(input.cwd);
+    const worker = this.#workerAtCwd(input.cwd);
     if (!worker) {
-      throw new WorkerSessionError(
-        `No named worker is configured for hook cwd ${input.cwd}.`,
-      );
+      return {};
     }
     const observedAt = this.now();
     this.sessions.registerSession({
@@ -101,7 +99,11 @@ export class LifecycleHandler {
   }
 
   #userPromptSubmit(input: UserPromptSubmitHookInput): LifecycleHookOutput {
-    const worker = this.#workerForSession(input.session_id, input.cwd);
+    const workerAtCwd = this.#workerAtCwd(input.cwd);
+    if (!workerAtCwd) {
+      return {};
+    }
+    const worker = this.#workerForSession(input.session_id, workerAtCwd);
     const parsed = parseHandoff(input.prompt);
     const observedAt = this.now();
 
@@ -178,7 +180,11 @@ export class LifecycleHandler {
   }
 
   #stop(input: StopHookInput): LifecycleHookOutput {
-    const worker = this.#workerForSession(input.session_id, input.cwd);
+    const workerAtCwd = this.#workerAtCwd(input.cwd);
+    if (!workerAtCwd) {
+      return {};
+    }
+    const worker = this.#workerForSession(input.session_id, workerAtCwd);
     const observedAt = this.now();
     const finished = this.sessions.finishTurn(
       worker.name,
@@ -192,13 +198,26 @@ export class LifecycleHandler {
     return {};
   }
 
-  #workerForSession(sessionId: string, cwd: string) {
+  #workerAtCwd(cwd: string) {
+    try {
+      return this.sessions.getWorkerByCwd(cwd);
+    } catch (error) {
+      if (error instanceof WorkerSessionError) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  #workerForSession(
+    sessionId: string,
+    workerAtCwd: NonNullable<ReturnType<WorkerSessionStore["getWorkerByCwd"]>>,
+  ) {
     const worker = this.sessions.getWorkerBySession(sessionId);
     if (!worker) {
       throw new WorkerSessionError(`No named worker owns Codex session ${sessionId}.`);
     }
-    const workerAtCwd = this.sessions.getWorkerByCwd(cwd);
-    if (workerAtCwd?.name !== worker.name) {
+    if (workerAtCwd.name !== worker.name) {
       throw new WorkerSessionError(
         `Codex session ${sessionId} is not running in ${worker.worktreePath}.`,
       );

@@ -18,6 +18,14 @@ export function defaultDispatcherDatabasePath(
   return join(stateHome, applicationDirectory, "dispatcher.sqlite");
 }
 
+export function dispatcherDatabaseDirectory(databasePath: string): string | null {
+  if (databasePath === ":memory:" || databasePath.startsWith("file:")) {
+    return null;
+  }
+
+  return dirname(resolve(databasePath));
+}
+
 export function ensureDatabaseDirectory(databasePath: string): void {
   if (databasePath === ":memory:" || databasePath.startsWith("file:")) {
     return;

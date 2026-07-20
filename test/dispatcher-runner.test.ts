@@ -17,7 +17,11 @@ import test from "node:test";
 import { formatHandoff, parseHandoff } from "../dispatcher/handoff.ts";
 import { LifecycleHandler } from "../dispatcher/lifecycle.ts";
 import { DispatcherQueue } from "../dispatcher/queue.ts";
-import { WorkerSessionStore, type WorkerSessionRecord } from "../dispatcher/session-store.ts";
+import {
+  isConfiguredWorkerCwd,
+  WorkerSessionStore,
+  type WorkerSessionRecord,
+} from "../dispatcher/session-store.ts";
 import {
   TmuxWorkerTerminal,
   type CommandExecutor,
@@ -37,9 +41,6 @@ import {
 
 const SESSION_A = "11111111-1111-4111-8111-111111111111";
 const SESSION_B = "22222222-2222-4222-8222-222222222222";
-const LIFECYCLE_COMMAND =
-  '/usr/bin/env node "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/dispatcher/hooks/lifecycle.ts"';
-
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), "after-party-runner-"));
   const worktree = join(directory, "worktree");
@@ -133,71 +134,6 @@ class FakeWorkerClientLock implements WorkerClientLock {
     };
   }
 }
-
-test("project hooks install only the reviewed named-worker lifecycle commands", () => {
-  const configuration = JSON.parse(
-    readFileSync(join(process.cwd(), ".codex", "hooks.json"), "utf8"),
-  ) as {
-    hooks?: Record<
-      string,
-      Array<{ hooks?: Array<{ type?: string; command?: string }> }>
-    >;
-  };
-
-  assert.deepEqual(Object.keys(configuration.hooks ?? {}).sort(), [
-    "SessionStart",
-    "Stop",
-    "UserPromptSubmit",
-  ]);
-  for (const event of Object.values(configuration.hooks ?? {})) {
-    assert.equal(event.length, 1);
-    assert.equal(event[0]?.hooks?.length, 1);
-    assert.equal(event[0]?.hooks?.[0]?.type, "command");
-    assert.equal(event[0]?.hooks?.[0]?.command, LIFECYCLE_COMMAND);
-  }
-});
-
-test("project hook command resolves the primary checkout from a linked worktree", () => {
-  const directory = mkdtempSync(join(tmpdir(), "after-party-hook-path-"));
-  const primary = join(directory, "primary");
-  const linked = join(directory, "linked");
-  try {
-    assert.equal(spawnSync("git", ["init", "-q", primary]).status, 0);
-    assert.equal(
-      spawnSync("git", [
-        "-C",
-        primary,
-        "-c",
-        "user.name=After Party Test",
-        "-c",
-        "user.email=after-party-test@example.invalid",
-        "commit",
-        "--allow-empty",
-        "-m",
-        "initial",
-      ]).status,
-      0,
-    );
-    assert.equal(
-      spawnSync("git", ["-C", primary, "worktree", "add", "-q", "-b", "linked", linked])
-        .status,
-      0,
-    );
-
-    const result = spawnSync(
-      "sh",
-      [
-        "-c",
-        'printf "%s\\n" "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/dispatcher/hooks/lifecycle.ts"',
-      ],
-      { cwd: linked, encoding: "utf8" },
-    );
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(result.stdout.trim(), join(primary, "dispatcher", "hooks", "lifecycle.ts"));
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
 
 test("handoff envelopes carry one stable, machine-readable message ID", () => {
   const state = fixture();
@@ -332,6 +268,104 @@ test("lifecycle hooks permit only a structured retry and leave completion to tur
     }).consume({ type: "turn.completed", turn_id: "turn-2" });
     assert.equal(completed?.outcome, "completed");
     assert.equal(state.queue.getMessage(enqueued.id)?.state, "completed");
+  } finally {
+    state.cleanup();
+  }
+});
+
+test("user-level lifecycle hooks do nothing outside configured worker worktrees", () => {
+  const state = fixture();
+  try {
+    state.sessions.configureWorker("beavis", state.worktree);
+    const lifecycle = new LifecycleHandler(state.queue, state.sessions, state.now);
+    const outsideCwd = state.directory;
+    const initialAvailability = state.queue.getWorker("beavis");
+    assert.equal(isConfiguredWorkerCwd(state.queue.databasePath, state.worktree), true);
+    assert.equal(isConfiguredWorkerCwd(state.queue.databasePath, outsideCwd), false);
+    assert.equal(
+      isConfiguredWorkerCwd(join(state.directory, "missing.sqlite"), state.worktree),
+      false,
+    );
+
+    assert.deepEqual(
+      lifecycle.handle({
+        hook_event_name: "SessionStart",
+        session_id: SESSION_A,
+        cwd: outsideCwd,
+        source: "startup",
+      }),
+      {},
+    );
+    assert.deepEqual(
+      lifecycle.handle({
+        hook_event_name: "UserPromptSubmit",
+        session_id: SESSION_A,
+        cwd: outsideCwd,
+        turn_id: "outside-turn",
+        prompt: "ordinary prompt",
+      }),
+      {},
+    );
+    assert.deepEqual(
+      lifecycle.handle({
+        hook_event_name: "Stop",
+        session_id: SESSION_A,
+        cwd: outsideCwd,
+        turn_id: "outside-turn",
+        stop_hook_active: false,
+      }),
+      {},
+    );
+    assert.equal(state.sessions.getWorker("beavis")?.sessionId, null);
+    assert.deepEqual(state.queue.getWorker("beavis"), initialAvailability);
+  } finally {
+    state.cleanup();
+  }
+});
+
+test("configured worker hooks still fail closed when their session is not registered", () => {
+  const state = fixture();
+  try {
+    state.sessions.configureWorker("beavis", state.worktree);
+    assert.throws(
+      () =>
+        new LifecycleHandler(state.queue, state.sessions, state.now).handle({
+          hook_event_name: "UserPromptSubmit",
+          session_id: SESSION_A,
+          cwd: state.worktree,
+          turn_id: "unregistered-turn",
+          prompt: "ordinary prompt",
+        }),
+      /No named worker owns Codex session/,
+    );
+  } finally {
+    state.cleanup();
+  }
+});
+
+test("structured completion without a receipt reports the inactive hook boundary", () => {
+  const state = fixture();
+  try {
+    state.queue.setWorkerAvailability("cornholio", "idle");
+    const message = state.queue.enqueue({
+      sender: "butthead",
+      recipient: "cornholio",
+      payload: { text: "This turn cannot complete without its hook receipt." },
+    });
+    state.queue.claimNext({ consumer: "runner", leaseMs: 500 });
+    state.queue.beginDelivery(message.id, "runner");
+
+    assert.throws(
+      () =>
+        new StructuredTurnOutcomeMonitor(state.queue, {
+          messageId: message.id,
+          attemptNumber: 1,
+          reportedBy: "cornholio",
+          streamId: "missing-hook-receipt",
+        }).consume({ type: "turn.completed", turn_id: "turn-without-hooks" }),
+      /without a durable recipient receipt.*hooks may be disabled, untrusted, changed, or unavailable/is,
+    );
+    assert.equal(state.queue.getMessage(message.id)?.state, "delivering");
   } finally {
     state.cleanup();
   }
@@ -800,6 +834,7 @@ test("tmux adapter hides start, resume, attach, and paste mechanics behind worke
   const pauses: number[] = [];
   const terminal = new TmuxWorkerTerminal({
     execute,
+    dispatcherDatabasePath: "/tmp/dispatcher state/dispatcher.sqlite",
     pause: (milliseconds) => pauses.push(milliseconds),
   });
   const worker: WorkerSessionRecord = {
@@ -822,6 +857,7 @@ test("tmux adapter hides start, resume, attach, and paste mechanics behind worke
 
   const start = calls.find((call) => call.args.includes("new-session"));
   assert.match(start?.args.at(-1) ?? "", /codex.*resume.*11111111/);
+  assert.match(start?.args.at(-1) ?? "", /'--add-dir' '\/tmp\/dispatcher state'/);
   assert.match(start?.args.at(-1) ?? "", /'\/tmp\/work tree'/);
   assert.equal(
     calls.find((call) => call.args.includes("load-buffer"))?.input,
@@ -1037,6 +1073,8 @@ if (prompt.includes("structured retry")) {
     const invocations = readFileSync(codexLog, "utf8").trim().split("\n");
     assert.equal(invocations.length, 3);
     assert.deepEqual(JSON.parse(invocations[0]), [
+      "--add-dir",
+      state.directory,
       "exec",
       "resume",
       "--json",

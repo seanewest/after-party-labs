@@ -7,6 +7,7 @@ import {
   type QueueMessage,
   type TurnInterruptionResult,
 } from "./queue.ts";
+import { dispatcherDatabaseDirectory } from "./paths.ts";
 import { parseAgentName, type AgentName } from "./registry.ts";
 import type { WorkerSessionRecord } from "./session-store.ts";
 
@@ -58,6 +59,7 @@ const TRANSIENT_ERROR_CODES = new Set([
 export class CodexExecTurnOutcomeSource implements TurnOutcomeSource {
   private readonly queue: DispatcherQueue;
   #codexCommand: string;
+  #codexArgumentsPrefix: string[];
   #retryAfterMs: number | undefined;
 
   constructor(
@@ -66,6 +68,10 @@ export class CodexExecTurnOutcomeSource implements TurnOutcomeSource {
   ) {
     this.queue = queue;
     this.#codexCommand = nonEmpty(options.codexCommand ?? "codex", "Codex command");
+    const dispatcherDirectory = dispatcherDatabaseDirectory(queue.databasePath);
+    this.#codexArgumentsPrefix = dispatcherDirectory
+      ? ["--add-dir", dispatcherDirectory]
+      : [];
     this.#retryAfterMs = options.retryAfterMs;
   }
 
@@ -82,8 +88,24 @@ export class CodexExecTurnOutcomeSource implements TurnOutcomeSource {
       retryAfterMs: this.#retryAfterMs,
     });
     const arguments_ = worker.sessionId
-      ? ["exec", "resume", "--json", worker.sessionId, "-"]
-      : ["exec", "--json", "--color", "never", "-C", worker.worktreePath, "-"];
+      ? [
+          ...this.#codexArgumentsPrefix,
+          "exec",
+          "resume",
+          "--json",
+          worker.sessionId,
+          "-",
+        ]
+      : [
+          ...this.#codexArgumentsPrefix,
+          "exec",
+          "--json",
+          "--color",
+          "never",
+          "-C",
+          worker.worktreePath,
+          "-",
+        ];
     const child = spawn(this.#codexCommand, arguments_, {
       cwd: worker.worktreePath,
       env: {
@@ -191,6 +213,12 @@ export class StructuredTurnOutcomeMonitor {
       let message = this.#message();
       if (message.state === "receipted") {
         message = this.queue.acknowledge(message.id);
+      }
+      if (message.state === "delivering") {
+        throw new QueueError(
+          `Worker ${message.recipient} completed message ${message.id} without a durable ` +
+            "recipient receipt. Lifecycle hooks may be disabled, untrusted, changed, or unavailable.",
+        );
       }
       if (message.state !== "acknowledged" && message.state !== "completed") {
         throw new QueueError(

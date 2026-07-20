@@ -1,5 +1,6 @@
 import { spawnSync, type SpawnSyncOptionsWithStringEncoding } from "node:child_process";
 
+import { dispatcherDatabaseDirectory } from "./paths.ts";
 import type { WorkerSessionRecord } from "./session-store.ts";
 
 export interface CommandResult {
@@ -29,6 +30,7 @@ export interface TmuxWorkerTerminalOptions {
   tmuxCommand?: string;
   tmuxArgsPrefix?: string[];
   codexCommand?: string;
+  dispatcherDatabasePath?: string;
   submitDelayMs?: number;
   pause?: (milliseconds: number) => void;
 }
@@ -40,6 +42,7 @@ export class TmuxWorkerTerminal implements WorkerTerminal {
   #tmuxCommand: string;
   #tmuxArgsPrefix: string[];
   #codexCommand: string;
+  #codexArgumentsPrefix: string[];
   #submitDelayMs: number;
   #pause: (milliseconds: number) => void;
 
@@ -48,6 +51,12 @@ export class TmuxWorkerTerminal implements WorkerTerminal {
     this.#tmuxCommand = options.tmuxCommand ?? "tmux";
     this.#tmuxArgsPrefix = options.tmuxArgsPrefix ?? [];
     this.#codexCommand = options.codexCommand ?? "codex";
+    const dispatcherDirectory = options.dispatcherDatabasePath
+      ? dispatcherDatabaseDirectory(options.dispatcherDatabasePath)
+      : null;
+    this.#codexArgumentsPrefix = dispatcherDirectory
+      ? ["--add-dir", dispatcherDirectory]
+      : [];
     this.#submitDelayMs = options.submitDelayMs ?? 100;
     this.#pause = options.pause ?? pauseThread;
     if (!Number.isSafeInteger(this.#submitDelayMs) || this.#submitDelayMs < 0) {
@@ -95,8 +104,15 @@ export class TmuxWorkerTerminal implements WorkerTerminal {
       return;
     }
     const codex = worker.sessionId
-      ? [this.#codexCommand, "resume", worker.sessionId, "-C", worker.worktreePath]
-      : [this.#codexCommand, "-C", worker.worktreePath];
+      ? [
+          this.#codexCommand,
+          ...this.#codexArgumentsPrefix,
+          "resume",
+          worker.sessionId,
+          "-C",
+          worker.worktreePath,
+        ]
+      : [this.#codexCommand, ...this.#codexArgumentsPrefix, "-C", worker.worktreePath];
     this.#checked(
       [
         ...this.#tmuxArgsPrefix,

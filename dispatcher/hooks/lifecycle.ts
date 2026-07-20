@@ -5,7 +5,7 @@ import process from "node:process";
 import { LifecycleHandler, parseLifecycleInput } from "../lifecycle.ts";
 import { defaultDispatcherDatabasePath } from "../paths.ts";
 import { DispatcherQueue } from "../queue.ts";
-import { WorkerSessionStore } from "../session-store.ts";
+import { isConfiguredWorkerCwd, WorkerSessionStore } from "../session-store.ts";
 
 async function main(): Promise<void> {
   const chunks: Buffer[] = [];
@@ -16,6 +16,10 @@ async function main(): Promise<void> {
     JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown,
   );
   const databasePath = defaultDispatcherDatabasePath();
+  if (!isConfiguredWorkerCwd(databasePath, input.cwd)) {
+    process.stdout.write("{}\n");
+    return;
+  }
   const queue = new DispatcherQueue(databasePath);
   const sessions = new WorkerSessionStore(databasePath);
   try {

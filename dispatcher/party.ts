@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 
 import process from "node:process";
+import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 
+import { validateLocalAppServerEndpoint } from "./app-server-client.ts";
 import {
   inspectHookInstallation,
   installHooks,
@@ -12,6 +14,7 @@ import { defaultDispatcherDatabasePath } from "./paths.ts";
 import { DispatcherQueue } from "./queue.ts";
 import { parseAgentName } from "./registry.ts";
 import { WorkerSessionStore } from "./session-store.ts";
+import { SharedWorkerDeliveryPrototype } from "./shared-worker-prototype.ts";
 import { TmuxWorkerTerminal } from "./tmux-runner.ts";
 import {
   CodexExecTurnOutcomeSource,
@@ -68,6 +71,17 @@ export async function runParty(argv = process.argv.slice(2)): Promise<number> {
       case "agent": {
         const name = parseAgentName(requiredPositional(positionals, 0, "worker name"));
         const worker = sessions.requireWorker(name);
+        const remoteEndpoint = option(parsed, "remote");
+        if (remoteEndpoint) {
+          const endpoint = validateLocalAppServerEndpoint(remoteEndpoint);
+          const remoteTerminal = new TmuxWorkerTerminal({
+            dispatcherDatabasePath: databasePath,
+            remoteEndpoint: endpoint,
+          });
+          remoteTerminal.start(worker);
+          remoteTerminal.attach(name);
+          return 0;
+        }
         const ownership = await workerClientLock.tryAcquire(name);
         if (!ownership) {
           throw new Error(
@@ -81,6 +95,35 @@ export async function runParty(argv = process.argv.slice(2)): Promise<number> {
           await ownership.release();
         }
         return 0;
+      }
+      case "shared-server": {
+        const name = parseAgentName(requiredPositional(positionals, 0, "worker name"));
+        const worker = sessions.requireWorker(name);
+        const endpoint = validateLocalAppServerEndpoint(
+          requiredOption(parsed, "listen"),
+        );
+        const ownership = await workerClientLock.tryAcquire(name);
+        if (!ownership) {
+          throw new Error(`Worker ${name} already has a Codex thread owner.`);
+        }
+        try {
+          await runSharedAppServer(endpoint, worker.worktreePath);
+        } finally {
+          await ownership.release();
+        }
+        return 0;
+      }
+      case "shared-deliver": {
+        const name = parseAgentName(requiredPositional(positionals, 0, "worker name"));
+        const result = await new SharedWorkerDeliveryPrototype(queue, sessions, {
+          endpoint: requiredOption(parsed, "remote"),
+          recipient: name,
+          consumer: option(parsed, "consumer"),
+          leaseMs: integerOption(parsed, "lease-ms"),
+          turnTimeoutMs: integerOption(parsed, "turn-timeout-ms"),
+        }).deliverOnce();
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+        return result.outcome === "failed" || result.outcome === "escalated" ? 1 : 0;
       }
       case "deliver": {
         const coordinator = coordinatorFor(
@@ -254,13 +297,41 @@ function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+async function runSharedAppServer(endpoint: string, cwd: string): Promise<void> {
+  const child = spawn("codex", ["app-server", "--listen", endpoint], {
+    cwd,
+    stdio: "inherit",
+  });
+  const forward = (signal: NodeJS.Signals) => child.kill(signal);
+  const onInterrupt = () => forward("SIGINT");
+  const onTerminate = () => forward("SIGTERM");
+  process.once("SIGINT", onInterrupt);
+  process.once("SIGTERM", onTerminate);
+  let exit: { code: number | null; signal: NodeJS.Signals | null };
+  try {
+    exit = await new Promise((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", (code, signal) => resolve({ code, signal }));
+    });
+  } finally {
+    process.off("SIGINT", onInterrupt);
+    process.off("SIGTERM", onTerminate);
+  }
+  if (exit.code !== 0) {
+    const label = exit.signal ? `signal ${exit.signal}` : `exit ${String(exit.code)}`;
+    throw new Error(`Shared Codex app-server ended with ${label}.`);
+  }
+}
+
 const helpText = `Usage: party [options] <command>
 
 Commands:
   hooks install|status|uninstall
   configure NAME ABSOLUTE_WORKTREE_PATH
   agents
-  agent NAME
+  shared-server NAME --listen ws://127.0.0.1:PORT
+  agent NAME [--remote ws://127.0.0.1:PORT]
+  shared-deliver NAME --remote ws://127.0.0.1:PORT [--turn-timeout-ms NUMBER]
   deliver [runner options]
   turn-events MESSAGE_ID --reported-by NAME --attempt NUMBER --stream-id ID
     [--retry-after-ms NUMBER] [--history-incomplete] < codex-events.jsonl

@@ -65,9 +65,15 @@ setInterval(() => {}, 1000);
       terminal.stop("cornholio");
       assert.equal(terminal.hasSession("cornholio"), false);
       writeFileSync(logPath, "", "utf8");
-      terminal.start(worker);
+      const remoteTerminal = new TmuxWorkerTerminal({
+        tmuxArgsPrefix: ["-L", socket],
+        codexCommand: fakeCodex,
+        remoteEndpoint: "ws://127.0.0.1:4500",
+      });
+      remoteTerminal.start(worker);
       const resumed = await waitForLog(logPath, SESSION_ID_FRAGMENT, 2_000);
-      assert.match(resumed, /"resume","33333333-3333-4333-8333-333333333333","-C"/);
+      assert.match(resumed, /"resume","33333333-3333-4333-8333-333333333333"/);
+      assert.match(resumed, /"--remote","ws:\/\/127\.0\.0\.1:4500","-C"/);
 
       const help = spawnSync("codex", ["resume", "--help"], { encoding: "utf8" });
       assert.equal(help.status, 0);

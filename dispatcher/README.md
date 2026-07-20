@@ -3,6 +3,11 @@
 This directory contains the local, durable handoff queue from Task #35, the named Codex worker
 runner from Task #36, and the GitHub feedback adapter from Task #37.
 
+Task #63 also contains an explicit shared app-server prototype. Its result, limitations, commands,
+and bounded Task #64 migration are documented in
+[Visible worker prototype](../docs/visible-worker-prototype.md). It does not change the default v1
+runner.
+
 ## Named Codex workers
 
 Configure each worker once with an absolute Git worktree path kept in the local state database:
@@ -153,6 +158,10 @@ inspection, `npm run check:types` for static checks, and `npm run test:dispatche
 suite. `npm run test:dispatcher:real` is an explicit local smoke using the installed authenticated
 Codex CLI; it makes real model calls to verify TUI delivery, sole-client automated resume, and later
 interactive steering, so normal CI does not run it.
+
+`npm run test:dispatcher:shared-real` is the separate Task #63 proof. It verifies that an
+app-server-started turn is visible and steerable through remote TUI clients while structured queue
+outcomes continue over JSON-RPC. It also makes real model calls and is not run by normal CI.
 
 ## GitHub feedback polling
 

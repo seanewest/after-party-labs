@@ -40,6 +40,11 @@ The reviewed hook implementation is `hooks/lifecycle.ts`; the project-local inst
 definitions through `/hooks`. New or changed definitions require a fresh trust review. The
 dispatcher never uses `--dangerously-bypass-hook-trust`.
 
+Codex loads linked-worktree hooks from the primary checkout. The installed command likewise resolves
+the Git common directory and runs the lifecycle handler from that primary checkout, so a named
+worker can remain on an older or unrelated feature branch without losing the shared hook runtime.
+The primary checkout must be updated to the reviewed commit before a changed hook is trusted.
+
 The trusted `SessionStart`, `UserPromptSubmit`, and `Stop` events register the named session and set
 idle/busy state without scraping terminal output. A dispatcher prompt includes an
 `AFTER_PARTY_HANDOFF_V1` envelope. `UserPromptSubmit` validates the complete envelope against the

@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/env node \"$(git rev-parse --show-toplevel)/dispatcher/hooks/lifecycle.ts\"",
+            "command": "/usr/bin/env node \"$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir)\")/dispatcher/hooks/lifecycle.ts\"",
             "statusMessage": "Registering named After Party worker"
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/env node \"$(git rev-parse --show-toplevel)/dispatcher/hooks/lifecycle.ts\"",
+            "command": "/usr/bin/env node \"$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir)\")/dispatcher/hooks/lifecycle.ts\"",
             "statusMessage": "Recording After Party worker activity"
           }
         ]
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/env node \"$(git rev-parse --show-toplevel)/dispatcher/hooks/lifecycle.ts\"",
+            "command": "/usr/bin/env node \"$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir)\")/dispatcher/hooks/lifecycle.ts\"",
             "statusMessage": "Completing After Party worker activity"
           }
         ]

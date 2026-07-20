@@ -52,6 +52,8 @@ Whenever a Task's Status or Current Agent changes, leave a concise signed commen
 
 After the GitHub handoff is complete, use the local dispatcher to notify a specific named worker when that worker owns the next action. The queue is only a delivery mechanism: a recipient must re-read GitHub before acting, and an unavailable dispatcher must not prevent or alter the GitHub workflow. Follow [Durable handoffs](docs/development.md#durable-handoffs).
 
+If an owned next action depends only on a GitHub state transition such as the expected pull request head merging or its checks completing, register a one-shot dispatcher continuation and end the turn. Do not hold the turn open, ask the human to monitor it, or assign the human a mechanical relay.
+
 Never use an unattended dispatcher turn for an action that needs human approval, and never trigger an approval prompt from one. The interactive owning agent must put the exact request on the pull request or Task, move it to Waiting for Human with Current Agent clear, and stop until the human responds through the normal workflow.
 
 When a new blocking Task dependency is discovered, add `Depends on #<number>` to the blocked Task and add the same Task as its native GitHub blocked-by relationship before moving it to Backlog. Keep those two records synchronized if the dependency is removed or replaced; a comment alone is not dependency metadata.

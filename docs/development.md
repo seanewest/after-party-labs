@@ -248,7 +248,9 @@ Done. Promote the blocked Task only when every recorded dependency is Done.
 
 Run the loop again after an action changes an item's state, including after opening a pull request,
 completing a review, merging, receiving a human answer, or finishing requested changes. Agents do
-not poll continuously; once the loop is empty, wait for the human to say `check the board` again.
+not hold turns open to poll. When an owned next action depends only on a supported GitHub transition,
+register a durable continuation as described below and end the turn. Otherwise, once the loop is
+empty, wait for the human to say `check the board` again.
 
 ### Claiming implementation work
 
@@ -339,6 +341,31 @@ key, for example:
     party-dispatcher enqueue --from beavis --to daria \
       --message "Task #123 is yours again. Read the new review on PR #456." \
       --dedupe-key "github:task-123:pr-456:review-789"
+
+When that action should begin only after an exact pull request head merges or all of its reported
+checks finish, register a one-shot continuation instead of asking the human to watch GitHub:
+
+    party-dispatcher continuation-register \
+      --repository seanewest/after-party-labs --pull-request 456 \
+      --expected-head FULL_HEAD_SHA --event checks_completed \
+      --from beavis --to beavis --task 123 \
+      --message "Re-read Task #123, PR #456, and its completed checks, then continue."
+
+Use `pull_request_merged` for the merge transition. The registration durably preserves the
+repository, pull request, expected head, event, registering agent, recipient, Task, source URL, and
+continuation message. `npm run poll:github -- --owner seanewest --project 1` evaluates pending
+registrations in the same bounded pass as review feedback. It queues each continuation through the
+existing dispatcher exactly once by stable deduplication, including after restart or overlapping
+polls. Busy and sleeping recipients retain queued work; unavailable recipients create a Morpheus
+escalation. A changed head or a pull request that closes without merging fails visibly instead of
+resuming work against the wrong revision. Use `party-dispatcher continuations` and
+`party-dispatcher inspect-continuation ID` to inspect the durable result.
+
+The agent registers the continuation only after GitHub records the authoritative Task ownership and
+context, then ends its turn. The external poll schedule performs the mechanical monitoring; the
+human is never assigned to watch checks, merges, deployments, or relay their completion. A resumed
+worker treats the message as a pointer and re-reads the current Task, pull request, head, threads,
+and checks before acting.
 
 Do not enqueue an unclaimed review to an arbitrary worker. Leave it in Review with Current Agent
 clear until a reviewer claims it through GitHub. If `party-dispatcher` is missing, unavailable, or

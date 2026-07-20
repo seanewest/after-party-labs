@@ -209,3 +209,64 @@ test("the CLI rejects invalid worker identities", async () => {
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("the CLI registers and inspects one durable GitHub continuation", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "after-party-cli-continuation-"));
+  const databasePath = join(directory, "queue.sqlite");
+  try {
+    const arguments_ = [
+      "continuation-register",
+      "--repository",
+      "example/after-party",
+      "--pull-request",
+      "61",
+      "--expected-head",
+      "abc123",
+      "--event",
+      "checks_completed",
+      "--from",
+      "butthead",
+      "--to",
+      "daria",
+      "--task",
+      "57",
+      "--message",
+      "Review the completed checks and continue Task #57.",
+      "--json",
+    ];
+    const created = await runCli(databasePath, ...arguments_);
+    const continuation = JSON.parse(created.stdout) as {
+      id: string;
+      outcome: string;
+    };
+    assert.equal(continuation.outcome, "pending");
+
+    const duplicate = await runCli(databasePath, ...arguments_);
+    assert.equal(
+      (JSON.parse(duplicate.stdout) as { id: string }).id,
+      continuation.id,
+    );
+
+    const listed = await runCli(
+      databasePath,
+      "continuations",
+      "--outcome",
+      "pending",
+    );
+    assert.match(listed.stdout, new RegExp(`pending ${continuation.id}`));
+    assert.match(listed.stdout, /checks_completed -> daria \(Task #57\)/);
+
+    const inspected = await runCli(
+      databasePath,
+      "inspect-continuation",
+      continuation.id,
+      "--json",
+    );
+    assert.equal(
+      (JSON.parse(inspected.stdout) as { expectedHead: string }).expectedHead,
+      "abc123",
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

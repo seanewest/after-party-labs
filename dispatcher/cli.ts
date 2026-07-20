@@ -2,6 +2,15 @@
 
 import process from "node:process";
 
+import {
+  GITHUB_CONTINUATION_EVENTS,
+  GITHUB_CONTINUATION_OUTCOMES,
+  GitHubContinuationError,
+  GitHubContinuationStore,
+  type GitHubContinuation,
+  type GitHubContinuationEvent,
+  type GitHubContinuationOutcome,
+} from "./github-continuation.ts";
 import { defaultDispatcherDatabasePath } from "./paths.ts";
 import {
   DispatcherQueue,
@@ -36,6 +45,7 @@ export function runCli(argv = process.argv.slice(2)): number {
   const databasePath = option(parsed, "database") ?? defaultDispatcherDatabasePath();
   const json = booleanOption(parsed, "json");
   const queue = new DispatcherQueue(databasePath);
+  const continuationStore = new GitHubContinuationStore(databasePath);
 
   try {
     switch (command) {
@@ -258,10 +268,62 @@ export function runCli(argv = process.argv.slice(2)): number {
         print({ requeued: count }, json);
         return 0;
       }
+      case "continuation-register": {
+        const eventValue = requiredOption(parsed, "event");
+        if (!GITHUB_CONTINUATION_EVENTS.includes(eventValue as GitHubContinuationEvent)) {
+          throw new GitHubContinuationError(
+            `Unknown GitHub continuation event "${eventValue}".`,
+          );
+        }
+        const continuation = continuationStore.register({
+          repository: requiredOption(parsed, "repository"),
+          pullRequestNumber: requiredIntegerOption(parsed, "pull-request"),
+          expectedHead: requiredOption(parsed, "expected-head"),
+          event: eventValue as GitHubContinuationEvent,
+          registeredBy: requiredOption(parsed, "from"),
+          recipient: requiredOption(parsed, "to"),
+          taskNumber: requiredIntegerOption(parsed, "task"),
+          message: requiredOption(parsed, "message"),
+          sourceUrl: option(parsed, "source-url"),
+        });
+        printContinuation(continuation, json);
+        return 0;
+      }
+      case "continuations": {
+        const outcomeValue = option(parsed, "outcome");
+        if (
+          outcomeValue &&
+          !GITHUB_CONTINUATION_OUTCOMES.includes(
+            outcomeValue as GitHubContinuationOutcome,
+          )
+        ) {
+          throw new GitHubContinuationError(
+            `Unknown continuation outcome "${outcomeValue}".`,
+          );
+        }
+        const continuations = continuationStore.list({
+          outcome: outcomeValue as GitHubContinuationOutcome | undefined,
+          limit: integerOption(parsed, "limit"),
+        });
+        printContinuations(continuations, json);
+        return 0;
+      }
+      case "inspect-continuation": {
+        const id = requiredPositional(positionals, 0, "continuation ID");
+        const continuation = continuationStore.get(id);
+        if (!continuation) {
+          throw new GitHubContinuationError(
+            `GitHub continuation "${id}" does not exist.`,
+          );
+        }
+        print(continuation, json);
+        return 0;
+      }
       default:
         throw new QueueError(`Unknown command "${command}". Run "party-dispatcher help".`);
     }
   } finally {
+    continuationStore.close();
     queue.close();
   }
 }
@@ -322,6 +384,14 @@ function integerOption(parsed: ParsedArguments, name: string): number | undefine
     throw new QueueError(`Option --${name} must be an integer.`);
   }
   return parsedValue;
+}
+
+function requiredIntegerOption(parsed: ParsedArguments, name: string): number {
+  const value = integerOption(parsed, name);
+  if (value === undefined) {
+    throw new QueueError(`Missing required option --${name}.`);
+  }
+  return value;
 }
 
 function workStartedOption(parsed: ParsedArguments): boolean | null {
@@ -424,6 +494,37 @@ function printEscalations(escalations: Escalation[], json: boolean): void {
   }
 }
 
+function printContinuation(
+  continuation: GitHubContinuation,
+  json: boolean,
+): void {
+  if (json) {
+    print(continuation, true);
+    return;
+  }
+  process.stdout.write(
+    `${continuation.outcome} ${continuation.id} ${continuation.repository}#${continuation.pullRequestNumber} ` +
+      `${continuation.event} -> ${continuation.recipient} (Task #${continuation.taskNumber})\n`,
+  );
+}
+
+function printContinuations(
+  continuations: GitHubContinuation[],
+  json: boolean,
+): void {
+  if (json) {
+    print(continuations, true);
+    return;
+  }
+  if (continuations.length === 0) {
+    process.stdout.write("No GitHub continuations.\n");
+    return;
+  }
+  for (const continuation of continuations) {
+    printContinuation(continuation, false);
+  }
+}
+
 function print(value: unknown, json: boolean): void {
   process.stdout.write(`${JSON.stringify(value, null, json ? 2 : 0)}\n`);
 }
@@ -453,6 +554,11 @@ Commands:
   retry MESSAGE_ID
   cancel MESSAGE_ID
   requeue-expired
+  continuation-register --repository OWNER/REPO --pull-request NUMBER
+    --expected-head SHA --event pull_request_merged|checks_completed
+    --from NAME --to NAME --task NUMBER --message TEXT [--source-url URL]
+  continuations [--outcome pending|queued|failed] [--limit NUMBER]
+  inspect-continuation CONTINUATION_ID
 
 Global options:
   --database PATH   Override PARTY_DISPATCHER_DB and the default state path.

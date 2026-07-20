@@ -1,7 +1,7 @@
 # Dispatcher and named workers
 
 This directory contains the local, durable handoff queue from Task #35, the named Codex worker
-runner from Task #36, and the GitHub feedback adapter from Task #37.
+runner from Task #36, and the GitHub feedback and continuation adapters from Tasks #37 and #57.
 
 ## Named Codex workers
 
@@ -141,6 +141,8 @@ worker is genuinely unavailable.
   failure; lifecycle hooks call `setWorkerAvailability` without classifying provider errors.
 - The GitHub poller records source events and advances each source checkpoint in one SQLite
   transaction, then calls `enqueue` with a durable `dedupeKey` derived from the GitHub event ID.
+- A GitHub continuation registration records one expected pull-request head and transition, then
+  uses the same queue and worker-state behavior when that transition occurs.
 - Either adapter calls `createEscalation`; Morpheus inspects and resolves the durable record.
 - Both adapters may create separate `DispatcherQueue` instances against the same SQLite file;
   `BEGIN IMMEDIATE` transactions and conditional state changes serialize competing consumers.
@@ -174,3 +176,35 @@ and signed changes-requested reviews are actionable directly. Busy and sleeping 
 their queued work. Missing or ambiguous board ownership, unavailable workers, source failures, and
 three changes-requested review cycles create durable Morpheus escalations without changing the
 board's `Original Agent` field.
+
+## GitHub transition continuations
+
+An agent whose next action is blocked only on a pull request merge or check completion can register
+a durable one-shot wait and end its turn:
+
+    party-dispatcher continuation-register \
+      --repository seanewest/after-party-labs --pull-request 456 \
+      --expected-head FULL_HEAD_SHA --event pull_request_merged \
+      --from beavis --to beavis --task 123 \
+      --message "Re-read Task #123 and merged PR #456, then continue."
+
+The supported events are `pull_request_merged` and `checks_completed`. Check completion means at
+least one check is reported and every reported check has reached a terminal state; failure is still
+a completion event so the responsible agent can interpret it. Registrations are idempotent for the
+same repository, pull request, expected head, event, recipient, and Task. Conflicting instructions
+for the same logical registration are rejected instead of silently replacing durable state.
+
+Each scheduled `poll:github` pass groups pending registrations by pull request and reads the current
+head, merge state, and check rollup with the authenticated `gh` CLI. The expected head must match.
+Merge waits fail if the pull request closes unmerged, and check waits fail if it closes before the
+checks finish. A successful transition enqueues one message with a continuation-ID deduplication
+key. This closes the crash window between queue insertion and marking the registration complete and
+makes restarts and overlapping pollers safe.
+
+Busy and sleeping recipients keep the queued message. An unavailable recipient produces a durable
+`worker_unavailable` escalation; source read errors remain pending and produce a deduplicated
+`delivery_failure` escalation; stale heads and closed-unmerged outcomes become failed registrations
+with durable escalation evidence for Morpheus. Inspect them with:
+
+    party-dispatcher continuations [--outcome pending|queued|failed]
+    party-dispatcher inspect-continuation CONTINUATION_ID

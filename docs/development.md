@@ -328,6 +328,33 @@ in brackets, for example `[DARIA]`.
 Project fields are authoritative for ownership and next action. Comments preserve the reasoning,
 evidence, questions, and handoff context behind status changes.
 
+The local named-worker dispatcher may notify a specific worker after that durable GitHub handoff is
+complete. It does not assign work, change project state, replace a signed comment, or make a private
+conversation authoritative. A recipient treats the queued message as a pointer and re-reads the
+referenced issue, pull request, review threads, and checks before acting.
+
+When a named worker owns the next action, enqueue one concise message with a stable deduplication
+key, for example:
+
+    party-dispatcher enqueue --from beavis --to daria \
+      --message "Task #123 is yours again. Read the new review on PR #456." \
+      --dedupe-key "github:task-123:pr-456:review-789"
+
+Do not enqueue an unclaimed review to an arbitrary worker. Leave it in Review with Current Agent
+clear until a reviewer claims it through GitHub. If `party-dispatcher` is missing, unavailable, or
+returns an error, leave the GitHub handoff intact and continue or stop according to the normal board
+loop; do not improvise another private routing path or repeat side effects blindly. The dispatcher
+uses stable message IDs and durable receipts, but delivery remains explicitly at least once.
+
+Unattended dispatcher turns must contain only work that can finish under their existing authority.
+Never enqueue work known to require human approval, and never let an automated worker raise an
+approval prompt. The interactive agent that owns the Task records the exact required action or
+decision on its pull request or Task, moves the Task to Waiting for Human with Current Agent clear,
+and stops until the human responds through GitHub or the direct conversation.
+
+The local operator commands, hook trust boundary, failure behavior, and recovery details are in
+[Dispatcher and named workers](../dispatcher/README.md).
+
 ## Artifacts
 
 Generated logs, screenshots, and test artifacts should remain outside Git unless they provide necessary durable evidence; preserve only the smallest sanitized record needed, in a clearly named evidence directory.

@@ -6,8 +6,9 @@
 
 All implementation, review, deployment, and live testing runs through GitHub. Repository changes
 normally use dedicated branches and pull requests. Pull request review findings and follow-up
-discussion are recorded on the pull request, not only in chat or local state. Persistent local
-agent workspaces are not part of the architecture.
+discussion are recorded on the pull request, not only in chat or local state. Named local workers
+and their dispatcher are an optional, recoverable delivery layer; GitHub project fields, issues,
+pull requests, and signed comments remain the shared source of ownership, status, and reasoning.
 
 ### Universal sign-in
 

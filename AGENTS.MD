@@ -34,7 +34,7 @@ Avoid overengineering.
 
 ### Distributed agent work
 
-All implementation, coordination, review, and live validation should work through GitHub issues, tasks, branches, pull requests, comments, and actions. Do not depend on a persistent local agent environment, private conversation context, or unrecorded local state.
+All implementation, coordination, review, and live validation should be recoverable from GitHub issues, tasks, branches, pull requests, comments, and actions. Named local workers and their dispatcher may deliver work promptly, but GitHub remains authoritative; do not depend on private conversation context or unrecorded local state.
 
 Repository changes should normally be developed on a dedicated branch and delivered through a pull request. Review findings and follow-up discussion for a pull request must be recorded on that pull request, not only in chat or a local report.
 
@@ -47,6 +47,8 @@ A Story in Review may need proposal review before implementation or triage after
 For Tasks, Original Agent is the sticky creator of the first implementation pull request. Current Agent is the mutable owner of the next action across implementation, review, rework, and re-review. Clear Current Agent for unclaimed review, human waits, and Done; never overwrite Original Agent during a handoff.
 
 Whenever a Task's Status or Current Agent changes, leave a concise signed comment on the Task stating what finished, the relevant pull request and current head when applicable, and who owns the next action or that it is unclaimed. Keep detailed implementation evidence and review findings on the pull request rather than duplicating them in the Task comment.
+
+After the GitHub handoff is complete, use the local dispatcher to notify a specific named worker when that worker owns the next action. The queue is only a delivery mechanism: a recipient must re-read GitHub before acting, and an unavailable dispatcher must not prevent or alter the GitHub workflow. Follow [Durable handoffs](docs/development.md#durable-handoffs).
 
 When a new blocking Task dependency is discovered, add `Depends on #<number>` to the blocked Task and add the same Task as its native GitHub blocked-by relationship before moving it to Backlog. Keep those two records synchronized if the dependency is removed or replaced; a comment alone is not dependency metadata.
 

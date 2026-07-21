@@ -9,7 +9,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3
 const GRAPH_ORIGIN = 'https://graph.microsoft.com';
 const ARM_ORIGIN = 'https://management.azure.com';
 
-export const DEVELOPMENT_ADMIN_CLIENT_ID = '2468c8e2-69e3-467e-b963-35cf30f736ce';
+export const DEVELOPMENT_ADMIN_CLIENT_ID = '7eb78f18-b49c-495c-a571-af03f06b58a9';
 export const REQUIRED_GRAPH_APPLICATION_ROLES = Object.freeze([
   'AppRoleAssignment.ReadWrite.All',
   'Application.ReadWrite.All',

@@ -57,6 +57,7 @@ test('Microsoft steering submits only the dedicated UPN and selects certificate 
   const upn = 'after-party-operator@corywest.onmicrosoft.com';
   let stage = 'username';
   let filled;
+  let accountClicks = 0;
   const page = {
     url: () => stage === 'done' ? 'https://example.test/' : 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=9edaa951-658e-4be2-9623-ee906cb604b2',
     waitForLoadState: async () => {},
@@ -64,7 +65,7 @@ test('Microsoft steering submits only the dedicated UPN and selects certificate 
       if (selector === 'body') return locator({ innerText: stage === 'username' ? 'Sign in' : stage === 'options' ? 'Sign-in options' : stage === 'choice' ? 'Use a certificate or smart card' : 'Signed in' });
       if (selector === '#auth-status') return locator({ count: stage === 'done' ? 1 : 0 });
       if (selector === 'input[name="passwd"]:visible') return locator({ isVisible: stage === 'options' });
-      if (selector === 'input[name="loginfmt"]:visible') return locator({ isVisible: stage === 'username', fill: (value) => { filled = value; } });
+      if (selector === 'input[name="loginfmt"]:visible') return locator({ isVisible: stage === 'username' || stage === 'options', fill: (value) => { filled = value; } });
       if (selector === '#idSIButton9, button[type="submit"]') return locator({ click: () => { stage = 'options'; } });
       if (selector.includes('data-value')) return locator();
       if (selector === '#signInAnotherWay') return locator();
@@ -72,6 +73,7 @@ test('Microsoft steering submits only the dedicated UPN and selects certificate 
     },
     getByText(pattern) {
       const expression = String(pattern);
+      if (pattern === upn) return locator({ isVisible: stage === 'options', click: () => { accountClicks += 1; } });
       if (/sign-in options/i.test(expression)) return locator({ isVisible: stage === 'options', click: () => { stage = 'choice'; } });
       if (/certificate/i.test(expression)) return locator({ isVisible: stage === 'choice', click: () => { stage = 'done'; } });
       return locator();
@@ -80,6 +82,7 @@ test('Microsoft steering submits only the dedicated UPN and selects certificate 
   };
   await driveMicrosoftRedirect({ page, spaOrigin: 'https://example.test', userPrincipalName: upn, timeoutMs: 10_000 });
   assert.equal(filled, upn);
+  assert.equal(accountClicks, 0);
   assert.equal(stage, 'done');
 });
 

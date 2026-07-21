@@ -115,27 +115,29 @@ export async function driveMicrosoftRedirect({
     if (/conditional access|you cannot access this right now|sign-in was blocked/i.test(text)) {
       throw new Error(`Microsoft Conditional Access blocked the dedicated operator: ${text}`);
     }
-    const account = page.getByText(userPrincipalName, { exact: true }).first();
-    if (await visible(account) && /pick an account|choose an account|sign in/i.test(text)) {
-      await account.click();
-      checkpoint('microsoft-account', 'selected-dedicated-operator');
-      await wait(500);
-      continue;
-    }
-    const username = page.locator('input[name="loginfmt"]:visible');
-    if (await visible(username)) {
-      await username.fill(userPrincipalName);
-      await page.locator('#idSIButton9, button[type="submit"]').first().click();
-      checkpoint('microsoft-username', 'submitted-dedicated-operator');
-      await wait(600);
-      continue;
-    }
     if (await clickFirst([
       page.getByText(/use (?:a )?certificate or smart card|sign in with (?:a )?certificate|certificate-based authentication/i).first(),
       page.locator('[data-value="Certificate"], [data-value="X509Certificate"]').first(),
     ])) {
       checkpoint('microsoft-cba', 'certificate-selected');
       await wait(900);
+      continue;
+    }
+    const account = page.getByText(userPrincipalName, { exact: true }).first();
+    if (await visible(account) && /pick an account|choose an account/i.test(text)) {
+      await account.click();
+      checkpoint('microsoft-account', 'selected-dedicated-operator');
+      await wait(500);
+      continue;
+    }
+    const password = page.locator('input[name="passwd"]:visible');
+    const passwordVisible = await visible(password);
+    const username = page.locator('input[name="loginfmt"]:visible');
+    if (!passwordVisible && await visible(username)) {
+      await username.fill(userPrincipalName);
+      await page.locator('#idSIButton9, button[type="submit"]').first().click();
+      checkpoint('microsoft-username', 'submitted-dedicated-operator');
+      await wait(600);
       continue;
     }
     if (await clickFirst([
@@ -146,8 +148,7 @@ export async function driveMicrosoftRedirect({
       await wait(500);
       continue;
     }
-    const password = page.locator('input[name="passwd"]:visible');
-    if (await visible(password)) throw new Error('Microsoft requested a password instead of the configured operator certificate.');
+    if (passwordVisible) throw new Error('Microsoft requested a password instead of the configured operator certificate.');
     if (/stay signed in/i.test(text) && await clickFirst([
       page.locator('#idBtn_Back').first(),
       page.getByRole('button', { name: /^No$/i }).first(),

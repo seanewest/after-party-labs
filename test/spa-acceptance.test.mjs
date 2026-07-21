@@ -58,6 +58,7 @@ test('Microsoft steering submits only the dedicated UPN and selects certificate 
   let stage = 'username';
   let filled;
   let accountClicks = 0;
+  let optionChecks = 0;
   const page = {
     url: () => stage === 'done' ? 'https://example.test/' : 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=9edaa951-658e-4be2-9623-ee906cb604b2',
     waitForLoadState: async () => {},
@@ -74,7 +75,7 @@ test('Microsoft steering submits only the dedicated UPN and selects certificate 
     getByText(pattern) {
       const expression = String(pattern);
       if (pattern === upn) return locator({ isVisible: stage === 'options', click: () => { accountClicks += 1; } });
-      if (/sign-in options/i.test(expression)) return locator({ isVisible: stage === 'options', click: () => { stage = 'choice'; } });
+      if (/sign-in options/i.test(expression)) return locator({ isVisible: stage === 'options' && (optionChecks += 1) > 1, click: () => { stage = 'choice'; } });
       if (/certificate/i.test(expression)) return locator({ isVisible: stage === 'choice', click: () => { stage = 'done'; } });
       return locator();
     },
@@ -97,7 +98,7 @@ test('Microsoft steering fails closed when a password or Conditional Access page
     getByText() { return locator(); },
     getByRole() { return locator(); },
   });
-  await assert.rejects(() => driveMicrosoftRedirect({ page: page('Enter password', true), spaOrigin: 'https://example.test', userPrincipalName: 'operator@example.test', timeoutMs: 100 }), /requested a password/);
+  await assert.rejects(() => driveMicrosoftRedirect({ page: page('Enter password', true), spaOrigin: 'https://example.test', userPrincipalName: 'operator@example.test', timeoutMs: 100, passwordRoutingGraceMs: 0 }), /requested a password/);
   await assert.rejects(() => driveMicrosoftRedirect({ page: page('You cannot access this right now. Conditional Access policy.'), spaOrigin: 'https://example.test', userPrincipalName: 'operator@example.test', timeoutMs: 100 }), /Conditional Access blocked/);
 });
 

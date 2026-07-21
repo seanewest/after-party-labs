@@ -78,11 +78,13 @@ export async function driveMicrosoftRedirect({
   allowConsent = false,
   signal,
   timeoutMs = 120_000,
+  passwordRoutingGraceMs = 2_000,
   checkpoint = () => {},
 }) {
   const deadline = Date.now() + timeoutMs;
   let lastUrl = '';
   let stagnant = 0;
+  let passwordRoutingStarted = 0;
   while (Date.now() < deadline) {
     signal?.throwIfAborted();
     const current = page.url();
@@ -132,6 +134,7 @@ export async function driveMicrosoftRedirect({
     }
     const password = page.locator('input[name="passwd"]:visible');
     const passwordVisible = await visible(password);
+    if (!passwordVisible) passwordRoutingStarted = 0;
     const username = page.locator('input[name="loginfmt"]:visible');
     if (!passwordVisible && await visible(username)) {
       await username.fill(userPrincipalName);
@@ -148,7 +151,14 @@ export async function driveMicrosoftRedirect({
       await wait(500);
       continue;
     }
-    if (passwordVisible) throw new Error('Microsoft requested a password instead of the configured operator certificate.');
+    if (passwordVisible) {
+      passwordRoutingStarted ||= Date.now();
+      if (Date.now() - passwordRoutingStarted < passwordRoutingGraceMs) {
+        await wait(200);
+        continue;
+      }
+      throw new Error('Microsoft requested a password instead of the configured operator certificate.');
+    }
     if (/stay signed in/i.test(text) && await clickFirst([
       page.locator('#idBtn_Back').first(),
       page.getByRole('button', { name: /^No$/i }).first(),

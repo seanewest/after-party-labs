@@ -85,6 +85,7 @@ export async function driveMicrosoftRedirect({
   let lastUrl = '';
   let stagnant = 0;
   let passwordRoutingStarted = 0;
+  let dedicatedIdentitySubmitted = false;
   while (Date.now() < deadline) {
     signal?.throwIfAborted();
     const current = page.url();
@@ -128,22 +129,28 @@ export async function driveMicrosoftRedirect({
     const account = page.getByText(userPrincipalName, { exact: true }).first();
     if (await visible(account) && /pick an account|choose an account/i.test(text)) {
       await account.click();
+      dedicatedIdentitySubmitted = true;
       checkpoint('microsoft-account', 'selected-dedicated-operator');
       await wait(500);
       continue;
     }
     const password = page.locator('input[name="passwd"]:visible');
-    const passwordVisible = await visible(password);
-    if (!passwordVisible) passwordRoutingStarted = 0;
+    const passwordShellVisible = await visible(password) && (
+      dedicatedIdentitySubmitted
+      || /enter password|forgot (?:my |your )?password/i.test(text)
+      || text.toLowerCase().includes(userPrincipalName.toLowerCase())
+    );
+    if (!passwordShellVisible) passwordRoutingStarted = 0;
     const username = page.locator('input[name="loginfmt"]:visible');
-    if (!passwordVisible && await visible(username)) {
+    if (!passwordShellVisible && await visible(username)) {
       await username.fill(userPrincipalName);
-      await page.locator('#idSIButton9, button[type="submit"]').first().click();
+      await username.press('Enter');
+      dedicatedIdentitySubmitted = true;
       checkpoint('microsoft-username', 'submitted-dedicated-operator');
       await wait(600);
       continue;
     }
-    if (passwordVisible && await clickFirst([
+    if (passwordShellVisible && await clickFirst([
       page.getByText(/sign-in options|sign in another way/i).first(),
       page.locator('#signInAnotherWay').first(),
     ])) {
@@ -151,7 +158,7 @@ export async function driveMicrosoftRedirect({
       await wait(500);
       continue;
     }
-    if (passwordVisible) {
+    if (passwordShellVisible) {
       passwordRoutingStarted ||= Date.now();
       if (Date.now() - passwordRoutingStarted < passwordRoutingGraceMs) {
         await wait(200);

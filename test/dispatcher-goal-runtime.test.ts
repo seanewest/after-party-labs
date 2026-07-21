@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,8 +15,10 @@ import { GoalContextStore } from "../dispatcher/goal-context.ts";
 import { GoalEventDelivery } from "../dispatcher/goal-event-delivery.ts";
 import { GoalGateway } from "../dispatcher/goal-gateway.ts";
 import {
+  boundedGitHubBackoff,
   GhProjectGoalSource,
   GoalGitHubPoller,
+  isTransientGitHubFailure,
   type BoardGoal,
   type GoalGitHubSource,
   type GoalSourceEvent,
@@ -290,14 +293,87 @@ test("goal poller provisions once and deduplicates durable snapshots", async () 
     });
     const poller = new GoalGitHubPoller(source, value.store, { provision });
     assert.deepEqual(await poller.poll(), {
-      goals: 1, provisioned: 1, recorded: 1, duplicates: 0, skipped: 0, failures: [],
+      goals: 1, provisioned: 1, recorded: 1, duplicates: 0, skipped: 0,
+      discoveryFailed: false, failures: [],
     });
     assert.deepEqual(await poller.poll(), {
-      goals: 1, provisioned: 0, recorded: 0, duplicates: 1, skipped: 0, failures: [],
+      goals: 1, provisioned: 0, recorded: 0, duplicates: 1, skipped: 0,
+      discoveryFailed: false, failures: [],
     });
     assert.equal(recorded, 1);
   } finally {
     value.close();
+  }
+});
+
+test("project discovery failure preserves durable events and reports retryable state", async () => {
+  const value = fixture();
+  try {
+    const event = value.store.enqueueEvent({
+      contextId: value.context.id,
+      sourceId: "github:pending-before-outage",
+      sourceKind: "issue_comment",
+      sourceVersion: "v1",
+      sourceTime: 1,
+      payload: { body: "already durable" },
+    });
+    const source: GoalGitHubSource = {
+      async listGoals() { throw new Error("GraphQL capacity unavailable"); },
+      async listEvents() { return []; },
+      async recordContext() {},
+    };
+    const result = await new GoalGitHubPoller(source, value.store).poll();
+    assert.equal(result.discoveryFailed, true);
+    assert.match(result.failures[0].error, /GraphQL capacity/);
+    assert.equal(value.store.listEvents(value.context.id)[0].id, event.id);
+    assert.equal(value.store.listEvents(value.context.id)[0].state, "pending");
+  } finally {
+    value.close();
+  }
+});
+
+test("GitHub retry policy is exponential, bounded, and recognizes capacity failures", () => {
+  assert.deepEqual(
+    [1, 2, 3, 4, 5].map((attempt) => boundedGitHubBackoff(attempt, 10, 40)),
+    [10, 20, 40, 40, 40],
+  );
+  assert.equal(isTransientGitHubFailure("GraphQL: API rate limit exceeded"), true);
+  assert.equal(isTransientGitHubFailure("unknown owner type"), true);
+  assert.equal(isTransientGitHubFailure("invalid project configuration"), false);
+});
+
+test("continuous goal runner backs off in-process instead of exiting on discovery outage", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "after-party-goal-backoff-"));
+  const bin = join(directory, "bin");
+  const calls = join(directory, "gh-calls");
+  const gh = join(bin, "gh");
+  const database = join(directory, "dispatcher.sqlite");
+  mkdirSync(bin, { mode: 0o700 });
+  writeFileSync(gh, "#!/bin/sh\necho call >> \"$GH_CALL_LOG\"\necho 'GraphQL capacity unavailable' >&2\nexit 1\n", { mode: 0o700 });
+  chmodSync(gh, 0o700);
+  const child = spawn(process.execPath, [
+    join(process.cwd(), "dispatcher", "party.ts"),
+    "--database", database,
+    "run", "--owner", "seanewest", "--project", "1",
+    "--checkout", process.cwd(), "--interval-ms", "5",
+    "--github-backoff-ms", "20", "--github-max-backoff-ms", "40",
+  ], {
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, GH_CALL_LOG: calls },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let stderr = "";
+  child.stderr!.setEncoding("utf8");
+  child.stderr!.on("data", (chunk) => { stderr += String(chunk); });
+  try {
+    await waitUntil(() => stderr.includes("attempt 2"), 2_000);
+    assert.equal(child.exitCode, null);
+    assert.match(stderr, /retrying in 20ms.*attempt 1/s);
+    assert.match(stderr, /retrying in 40ms.*attempt 2/s);
+    assert.ok(readFileSync(calls, "utf8").trim().split("\n").length >= 2);
+  } finally {
+    child.kill("SIGTERM");
+    await new Promise<void>((resolve) => child.once("close", () => resolve()));
+    rmSync(directory, { recursive: true, force: true });
   }
 });
 
@@ -422,6 +498,8 @@ test("managed user service install is idempotent and preserves unrelated units",
     assert.match(unit, /run.*--owner.*seanewest.*--project.*1/);
     assert.match(unit, /WorkingDirectory=\/tmp\/after-party-service-/);
     assert.match(unit, /Environment="PATH=\/usr\/bin"/);
+    assert.match(unit, /StartLimitIntervalSec=300/);
+    assert.match(unit, /StartLimitBurst=5/);
     installDispatcherService({
       owner: "seanewest", projectNumber: 1, checkout: directory, unitPath, run,
     });
@@ -440,4 +518,12 @@ async function availablePort(): Promise<number> {
   assert.ok(address && typeof address === "object");
   await new Promise<void>((resolve) => server.close(() => resolve()));
   return address.port;
+}
+
+async function waitUntil(predicate: () => boolean, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("Timed out waiting for test condition.");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }

@@ -403,6 +403,7 @@ export interface GoalGitHubPollResult {
   recorded: number;
   duplicates: number;
   skipped: number;
+  discoveryFailed: boolean;
   failures: Array<{ goal: string; error: string }>;
 }
 
@@ -429,9 +430,21 @@ export class GoalGitHubPoller {
       recorded: 0,
       duplicates: 0,
       skipped: 0,
+      discoveryFailed: false,
       failures: [],
     };
-    for (const goal of await this.#source.listGoals()) {
+    let goals: BoardGoal[];
+    try {
+      goals = await this.#source.listGoals();
+    } catch (error) {
+      result.discoveryFailed = true;
+      result.failures.push({
+        goal: "project-discovery",
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return result;
+    }
+    for (const goal of goals) {
       result.goals += 1;
       try {
         let context = this.#store.getByGoal(goal);
@@ -491,6 +504,26 @@ export class GoalGitHubPoller {
       this.#store.releaseCoordinationLock(lock, this.#owner);
     }
   }
+}
+
+export function isTransientGitHubFailure(message: string): boolean {
+  return /graphql|rate.?limit|capacity|timeout|timed out|temporar|try again|unknown owner type|HTTP 5\d\d|ECONN|ENET|EAI_AGAIN/i
+    .test(message);
+}
+
+export function boundedGitHubBackoff(
+  consecutiveFailures: number,
+  baseMs = 5_000,
+  maximumMs = 300_000,
+): number {
+  if (!Number.isSafeInteger(consecutiveFailures) || consecutiveFailures < 1) {
+    throw new Error("consecutive GitHub failures must be a positive integer.");
+  }
+  if (!Number.isSafeInteger(baseMs) || baseMs < 1 ||
+    !Number.isSafeInteger(maximumMs) || maximumMs < baseMs) {
+    throw new Error("GitHub backoff bounds are invalid.");
+  }
+  return Math.min(maximumMs, baseMs * (2 ** Math.min(consecutiveFailures - 1, 30)));
 }
 
 function snapshotEvent(

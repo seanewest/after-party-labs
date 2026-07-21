@@ -116,6 +116,12 @@ ephemeral execution without deleting durable context state. `recover` reconciles
 same context. `open` resolves or launches the safe loopback browser route. `status` is concise;
 `inspect` includes pending events and recovery state; `logs` streams sanitized local diagnostics.
 `run --once` performs one bounded reconciliation and event-delivery pass for schedulers and tests.
+In continuous mode, project discovery and transient GitHub/GraphQL capacity failures stay inside
+the same dispatcher process. Existing durable events continue to reconcile, while GitHub polling
+uses exponential backoff from five seconds to a five-minute maximum and resets after a successful
+poll. For failure injection, the bounds can be shortened with `--github-backoff-ms` and
+`--github-max-backoff-ms`; production service installation uses the safe defaults. The user unit
+also limits unexpected process restarts to five within five minutes.
 
 For a bounded first cutover, the maintainer may explicitly start one local `party run` process.
 That runner observes Ready goals and creates their routes; it is not a separate goal owner, and no

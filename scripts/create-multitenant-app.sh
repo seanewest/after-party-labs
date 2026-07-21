@@ -145,6 +145,9 @@
   target_app_id=''
   target_object_id=''
   local_service_principal_id=''
+  reconcile_snapshot=''
+  reconcile_scope_snapshot=''
+  reconcile_mutated='false'
 
   verify_optional_local_service_principal() {
     local app_id="$1"
@@ -223,6 +226,24 @@
       echo "Creation did not complete; removing partial app registration $created_app_id." >&2
       az ad app delete --id "$created_app_id" --only-show-errors >/dev/null 2>&1 ||
         echo "Automatic cleanup failed. Delete app registration $created_app_id manually." >&2
+    elif (( status != 0 )) && [[ "$reconcile_mutated" == 'true' && -n "$reconcile_snapshot" && -n "$reconcile_scope_snapshot" ]]; then
+      echo "Reconciliation did not complete; restoring application $AFTER_PARTY_APP_ID." >&2
+      if az rest \
+        --method PATCH \
+        --url "$graph_applications_url/$target_object_id" \
+        --headers 'Content-Type=application/json' \
+        --body "$reconcile_scope_snapshot" \
+        --only-show-errors >/dev/null 2>&1; then
+        az rest \
+          --method PATCH \
+          --url "$graph_applications_url/$target_object_id" \
+          --headers 'Content-Type=application/json' \
+          --body "$reconcile_snapshot" \
+          --only-show-errors >/dev/null 2>&1 ||
+          echo "Automatic restore failed. Re-run exact-ID reconciliation for application $AFTER_PARTY_APP_ID." >&2
+      else
+        echo "Automatic restore failed. Re-run exact-ID reconciliation for application $AFTER_PARTY_APP_ID." >&2
+      fi
     fi
     exit "$status"
   }
@@ -288,14 +309,34 @@
       exit 1
     fi
 
+    target_app_id="$AFTER_PARTY_APP_ID"
+    target_object_id="$existing_object_id"
+    reconcile_snapshot="$(
+      az ad app show \
+        --id "$AFTER_PARTY_APP_ID" \
+        --query '{signInAudience:signInAudience,spa:spa,web:web,requiredResourceAccess:requiredResourceAccess,identifierUris:identifierUris,api:api,appRoles:appRoles}' \
+        --output json \
+        --only-show-errors
+    )"
+    reconcile_scope_snapshot="$(
+      az ad app show \
+        --id "$AFTER_PARTY_APP_ID" \
+        --query '{signInAudience:signInAudience,spa:spa,web:web,requiredResourceAccess:requiredResourceAccess,identifierUris:identifierUris,api:{acceptMappedClaims:api.acceptMappedClaims,knownClientApplications:api.knownClientApplications,oauth2PermissionScopes:api.oauth2PermissionScopes,preAuthorizedApplications:`[]`,requestedAccessTokenVersion:api.requestedAccessTokenVersion},appRoles:appRoles}' \
+        --output json \
+        --only-show-errors
+    )"
+    if [[ "$reconcile_snapshot" != \{*\} || "$reconcile_scope_snapshot" != \{*\} ]]; then
+      echo 'The existing application configuration could not be snapshotted. No changes were made.' >&2
+      exit 1
+    fi
+
+    reconcile_mutated='true'
     az rest \
       --method PATCH \
       --url "$graph_applications_url/$existing_object_id" \
       --headers 'Content-Type=application/json' \
       --body "$reconcile_request_body" \
       --only-show-errors >/dev/null
-    target_app_id="$AFTER_PARTY_APP_ID"
-    target_object_id="$existing_object_id"
   fi
 
   if [[ -z "$target_object_id" ]]; then
@@ -308,6 +349,11 @@
     exit 1
   fi
 
+  runtime_api_scope_request_body="$(printf \
+    '{"identifierUris":["api://%s"],"api":{"requestedAccessTokenVersion":2,"oauth2PermissionScopes":[{"adminConsentDescription":"Allow the After Party SPA to call the matching tenant runtime as the signed-in operator.","adminConsentDisplayName":"Operate the After Party tenant runtime","id":"%s","isEnabled":true,"type":"Admin","userConsentDescription":null,"userConsentDisplayName":null,"value":"%s"}],"preAuthorizedApplications":[]},"appRoles":[]}' \
+    "$target_app_id" \
+    "$runtime_api_scope_id" \
+    "$runtime_api_scope_name")"
   runtime_api_request_body="$(printf \
     '{"identifierUris":["api://%s"],"api":{"requestedAccessTokenVersion":2,"oauth2PermissionScopes":[{"adminConsentDescription":"Allow the After Party SPA to call the matching tenant runtime as the signed-in operator.","adminConsentDisplayName":"Operate the After Party tenant runtime","id":"%s","isEnabled":true,"type":"Admin","userConsentDescription":null,"userConsentDisplayName":null,"value":"%s"}],"preAuthorizedApplications":[{"appId":"%s","delegatedPermissionIds":["%s"]}]},"appRoles":[]}' \
     "$target_app_id" \
@@ -315,6 +361,12 @@
     "$runtime_api_scope_name" \
     "$target_app_id" \
     "$runtime_api_scope_id")"
+  az rest \
+    --method PATCH \
+    --url "$graph_applications_url/$target_object_id" \
+    --headers 'Content-Type=application/json' \
+    --body "$runtime_api_scope_request_body" \
+    --only-show-errors >/dev/null
   az rest \
     --method PATCH \
     --url "$graph_applications_url/$target_object_id" \

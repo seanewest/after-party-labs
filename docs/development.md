@@ -1,13 +1,16 @@
 # Development
 
-## GitHub-only development
+## Durable development state
 
 All development happens through GitHub issues, branches, pull requests, reviews, and Actions.
 
-GitHub is the shared memory of the project. Agents should not depend on persistent local
-environments, private conversations, or context that is not recorded there.
+GitHub is authoritative for product goals, constraints, current phases, durable conclusions,
+acceptance evidence, and human gates. Each goal also has one persistent local Codex conversation
+and execution context for its evolving technical plan and live work. The local dispatcher must make
+that context recoverable; it does not make private runtime state authoritative over GitHub.
 
-Implementation and review should normally be performed by separate agents.
+One persistent goal context owns implementation, review follow-up, merge, and proof. It may use
+temporary subagents for bounded independent review or research without transferring ownership.
 
 ## Human feedback and legibility
 
@@ -132,228 +135,87 @@ need the lock.
 The final live test should deploy the exact image digest that was verified. Azure should prove
 the Microsoft and platform integration, not serve as the main browser-development loop.
 
-## Work coordination
+## Goal-context workflow
 
-Issues are the project's canonical work items for board-managed work. Each board-managed issue
-stays on the Development project through implementation and review. The issue card is authoritative
-for ownership and status; the pull request records the change, validation, and review rather than
-becoming another project card.
-
-The `Work Type` single-select field has two values:
-
-- **Story**: a meaningful outcome and its overall acceptance criteria. A Story is not claimed by an
-  agent. Use GitHub sub-issues for the Tasks needed to complete it, without adding deeper hierarchy.
-- **Task**: executable work that an agent may claim. A Task may be a Story sub-issue or standalone.
-
-A pull request in the normal board workflow must link the Task it implements, normally with
-`Closes #<number>`. It should not close the parent Story.
-
-The project board defines the dispatch scope. An issue or pull request without a corresponding
-issue card on the board is not automatically claimed or reviewed. It may be intentionally outside
-the normal workflow; act on it only when the human explicitly asks.
+The project board contains product goals, not an engineering org chart. A goal records its outcome,
+constraints, success criteria, durable evidence, and genuine human gates. One persistent Codex
+context owns an actionable goal until it reaches Done.
 
 The project uses these statuses:
 
-- **Backlog**: recognized work that is not ready to begin, including a Story still being shaped.
-- **Ready**: an actionable Task that an eligible agent may claim.
-- **In Progress**: a Task's implementing agent has the next action, or an approved Story has been
-  divided into Tasks and work on its outcome is underway.
-- **Waiting for Human**: a Task requires a human decision or action, or a Story is ready for human
-  acceptance against `main` or the deployed application.
-- **Review**: a Task's linked pull request needs agent review, or a Story needs proposal review or
-  triage after failed human acceptance.
-- **Done**: a Task has been merged or otherwise completed, or the human has explicitly accepted a
-  Story.
+- **Backlog**: recognized work that is not ready to start.
+- **Ready**: a sufficiently specified goal that the dispatcher may start.
+- **In Progress**: the goal context is planning, implementing, testing, reviewing, fixing, waiting
+  for a machine event, merging, deploying, or gathering acceptance proof.
+- **Human Needed**: progress requires a real human decision, unavailable authority, a destructive
+  or consequential action outside standing authorization, or subjective acceptance that cannot be
+  automated.
+- **Done**: the acceptance criteria are satisfied and durable proof is recorded.
 
-A Story starts in Backlog, moves to In Progress once it is approved and divided into Tasks, and
-moves to Waiting for Human after its required Tasks are Done and its acceptance target is available
-from `main`. Leave a signed comment with the URL or manual action, deployed commit when relevant,
-and concise verification steps. Move the Story to Done and close it only after the human explicitly
-confirms acceptance.
+Retired ownership and routing fields such as `Original Agent`, `Current Agent`, and Story/Task do
+not determine dispatch. Historical comments that use the old workflow are evidence only. The
+current goal body and latest explicit human direction win when records conflict.
 
-If human acceptance fails, record the reason on the Story and move it to Review. Create or reopen
-the required Tasks, move the Story back to In Progress, and leave its Original Agent blank. A Story
-in Review is reviewed or reconciled, never claimed for implementation. Stories never use Ready.
+### Starting and resuming a goal
 
-Until pull request previews exist, merge satisfactory Task pull requests normally and perform Story
-acceptance afterward against `main` or the deployed application.
+The target dispatcher behavior is: moving an eligible goal to Ready creates or resumes exactly one
+context, stores its stable Goal Context ID, and writes a clickable loopback Context URL to the card.
+Starting the work moves the goal to In Progress. The URL opens the same live Codex surface used by
+automation, including an already-running turn; it must support steering, follow-up messages, image
+paste, detach, and reattach without changing conversations.
 
-The workflow requires `Original Agent` and `Current Agent` single-select fields with Beavis,
-Butthead, Cornholio, Daria, and Morpheus as their values.
+The completed dispatcher resumes the same context when the goal, linked pull request, review
+feedback, checks, merge, deployment, or human response changes. Busy contexts retain events in
+order. An idle or sleeping context resumes automatically. Duplicate observations must not start
+another context or repeat an unsafe action.
 
-- **Original Agent** records the agent that opened the Task's first implementation pull request.
-  Set it when that pull request is opened and do not change it during review, rework, or takeover.
-  Review changes normally return there because that agent retains the richest implementation
-  context.
-- **Current Agent** records who owns the next action now. Set it when an agent claims
-  implementation, rework, review, or re-review. Clear it when work is handed to an unclaimed review
-  stage, waits on the human, or reaches Done.
+Waiting for a machine-observable event ends the current model turn. The durable event later wakes
+the same context; a model turn does not poll or busy-wait. A process, WSL, tmux, or terminal failure
+may stop execution but must not lose the goal, conversation identity, branch, worktree, or pending
+event.
 
-A Story never has an Original Agent. Its Current Agent is normally blank and is set only while an
-agent actively owns proposal review or failed-acceptance reconciliation.
+### Planning, branches, and review
 
-### Reviewing a Story proposal
+The owning context keeps its technical plan internally and updates it as evidence changes. GitHub
+stores durable conclusions and acceptance evidence, not simulated internal assignments.
 
-While a Story is being shaped, keep it and its proposed Tasks in Backlog. When it is ready for
-review, move the Story to Review and leave this comment:
+Repository changes normally use a dedicated branch and a pull request linked to the goal. The same
+context owns the pull request through review fixes and merge. It may create temporary subagents for
+bounded research or adversarial review. Subagents do not claim board cards, become persistent
+workers, or create handoff loops. The owning context records material review conclusions on the
+pull request and either fixes them or explains why no change is needed.
 
-    [HUMAN] Ready for proposal review.
+Review is not a board column. A goal remains In Progress while checks or review are pending. Merge a
+satisfactory, authorized pull request once required checks and evidence are complete. Continue
+through deployment and automated acceptance proof where the goal requires them.
 
-An agent that did not draft the proposal claims the review with a signed comment and sets the
-Story's Current Agent to itself. The Story's Original Agent remains blank. The reviewer checks that:
+### Human gates
 
-"Reviewed" means the review occurred, not that the proposal was approved; always report the verdict
-as approved, changes requested, or waiting for human.
+Human Needed is not a general approval or waiting state. Use it only when the remaining step
+requires product direction, a material architecture choice, new authority, a destructive or
+consequential live action outside standing authorization, or inherently subjective acceptance.
 
-- the outcome and acceptance criteria are clear and testable;
-- the Tasks cover the outcome without unnecessary scope;
-- parallel Tasks have independent ownership boundaries;
-- dependent Tasks say `Depends on #<number>`; and
-- required human actions, live validation, and safety boundaries are represented.
+Put one exact decision or action and the supporting evidence on the goal, stop safely, and let the
+dispatcher resume the same context after the response. The human does not relay messages among
+implementation and review workers.
 
-Record the approved parallel groups and dependency order in a signed Story comment. On approval,
-move the Story to In Progress, clear its Current Agent, move immediately actionable Tasks to Ready,
-and keep dependent Tasks in Backlog. If the proposal needs a human decision, clear Current Agent,
-move the Story to Waiting for Human, and ask one clear question. If it is not ready for approval,
-clear Current Agent, explain the required changes, and move it to Backlog. The human may revise it
-and submit it for Review again.
+### Durable event contract
 
-### Checking the board
+GitHub is authoritative; the local dispatcher is the execution and recovery layer. Runtime
+databases, credentials, transcripts, locks, and machine-specific state remain outside Git.
 
-When the human says `check the board`, run this loop in order until nothing is actionable:
+Every delivered event has a stable ID. Source checkpoints, enqueueing, receipts, retries, and final
+outcomes are durable and idempotent across restarts and overlapping polls. Delivery may be at least
+once internally, but recipient-side receipts and action-level idempotency must keep duplicate
+events from duplicating goal work. An ambiguous post-work failure is surfaced for safe recovery,
+not replayed blindly.
 
-1. Resume unfinished work whose Current Agent is you. Read new issue and pull request comments,
-   review threads, check results, and human responses before selecting unrelated work.
-2. Reconcile Stories affected by Task state changes or human responses. A Story in Review needs
-   proposal review or failed-acceptance triage; claim the review with a signed comment, set Current
-   Agent to yourself, and leave Original Agent blank.
-3. If no owned item needs action, claim a suitable Task pull request in Review that was created by
-   another agent.
-4. If no review is available and there is no active implementation Task, claim the first compatible
-   Ready Task in board order. Ignore Stories and items without a Work Type.
-5. Otherwise stop and tell the human there is no actionable work.
+Automated delivery and the browser terminal share one conversation and execution surface. Never
+start a hidden competing Codex client. The loopback URL contains no reusable secret and resolves
+only through the maintainer's local dispatcher.
 
-Whenever an agent changes a Task's state, that agent reconciles its direct parent Story before
-continuing the loop. Keep the Story In Progress while required Tasks remain. After the final required
-Task is Done and the acceptance target is available, move the Story to Waiting for Human. A human
-acceptance failure moves it to Review; an explicit human confirmation moves it to Done. When a Task
-becomes Done, move any dependent Task whose recorded blockers are all Done from Backlog to Ready.
-
-If work reveals a new blocking Task dependency after proposal review, update the blocked Task before
-moving it to Backlog: add `Depends on #<number>` to its body, add the same Task as its native GitHub
-blocked-by relationship, and include the blocker in the signed transition comment. Keep the body and
-native relationship synchronized if the dependency is removed or replaced; the comment is handoff
-context, not dependency metadata. Do not remove a satisfied dependency merely because its Task is
-Done. Promote the blocked Task only when every recorded dependency is Done.
-
-Run the loop again after an action changes an item's state, including after opening a pull request,
-completing a review, merging, receiving a human answer, or finishing requested changes. Agents do
-not poll continuously; once the loop is empty, wait for the human to say `check the board` again.
-
-### Claiming implementation work
-
-Before substantive work, confirm that the issue is a Task, is still Ready, and its Current Agent is
-blank or already set to you. Set Current Agent to yourself, move the Task to In Progress, and leave
-a signed claim comment, for example:
-
-    [BEAVIS] Claimed for implementation. Beginning work now.
-
-If another agent is Current Agent, continue the dispatch loop without working on it. Original Agent
-does not reserve an unclaimed Task; it remains sticky historical ownership after the first pull
-request exists.
-
-An agent may have only one active implementation Task, and therefore only one unmerged
-implementation pull request, at a time. It may review another agent's work while its own pull
-request waits, but it may not claim another Ready Task until its current Task is completed, closed,
-or explicitly reassigned.
-
-### Pull requests and review
-
-Every Task Status or Current Agent change requires a concise signed comment on the Task. State what
-finished, link the pull request and current head when applicable, and say who owns the next action or
-that it is unclaimed. One comment may describe both field changes from the same action. Keep detailed
-implementation evidence and review findings on the pull request; the Task comment is the durable
-board-transition summary for the human.
-
-When implementation and required validation are complete, the implementer links the pull request
-to the Task, marks the pull request ready, and leaves a concise handoff on the pull request: what
-changed, how it was tested, and anything the reviewer should pay attention to. On the Task, leave the
-signed transition summary, move it to Review, and clear Current Agent so an independent reviewer can
-claim the next action. If Original Agent is blank, set it to the implementer that opened this first
-implementation pull request.
-
-An agent must not review its own implementation. Before every review or re-review of a new head,
-leave a fresh signed claim comment on the Task that identifies that head and set Current Agent to
-yourself. Original Agent remains unchanged. A previous review claim does not reserve the next
-re-review.
-
-The reviewer completes one of these outcomes:
-
-- If the current head is satisfactory and the required checks and evidence are complete, merge the
-  pull request, leave the signed Task transition summary, move the Task to Done, and clear Current
-  Agent.
-- If implementation changes are needed, explain them clearly on the pull request, leave the signed
-  Task transition summary, move the Task to In Progress, and set Current Agent to Original Agent.
-  Use another agent only when the original is unavailable, work is explicitly reassigned, or
-  repeated cycles justify fresh ownership; never change Original Agent.
-- If a human decision or action is needed, explain it clearly, clear Current Agent, and move the
-  Task to Waiting for Human.
-
-The Original Agent normally handles requested changes. When the new head is ready, that agent leaves
-the pull request handoff and signed Task transition summary, moves the Task to Review, and clears
-Current Agent. The same reviewer may claim it again with a fresh signed Task comment, but the
-re-review is not reserved for that reviewer.
-
-Merging a Task's pull request completes that Task, not its parent Story. Reconcile the parent Story,
-but close it only after all required Tasks are Done and the human explicitly confirms its acceptance
-criteria.
-
-### Human attention
-
-Waiting for Human is only for work that cannot safely continue without a human decision or action;
-it is not a general approval stage. Address the human directly in a short, natural comment that
-says what is needed, why, your recommendation when there is a choice, and what will happen next.
-Do not turn the request into a form or a long agent report.
-
-Original Agent remains unchanged for a Task and blank for a Story. Current Agent remains blank while
-waiting. On the next board check, an agent reads the response, claims the next action by setting
-Current Agent, moves the issue to the appropriate status, and continues. The human does not need to
-update the project card.
-
-### Durable handoffs
-
-Because all agents may use the same GitHub account, important comments begin with the agent's name
-in brackets, for example `[DARIA]`.
-
-Project fields are authoritative for ownership and next action. Comments preserve the reasoning,
-evidence, questions, and handoff context behind status changes.
-
-The local named-worker dispatcher may notify a specific worker after that durable GitHub handoff is
-complete. It does not assign work, change project state, replace a signed comment, or make a private
-conversation authoritative. A recipient treats the queued message as a pointer and re-reads the
-referenced issue, pull request, review threads, and checks before acting.
-
-When a named worker owns the next action, enqueue one concise message with a stable deduplication
-key, for example:
-
-    party-dispatcher enqueue --from beavis --to daria \
-      --message "Task #123 is yours again. Read the new review on PR #456." \
-      --dedupe-key "github:task-123:pr-456:review-789"
-
-Do not enqueue an unclaimed review to an arbitrary worker. Leave it in Review with Current Agent
-clear until a reviewer claims it through GitHub. If `party-dispatcher` is missing, unavailable, or
-returns an error, leave the GitHub handoff intact and continue or stop according to the normal board
-loop; do not improvise another private routing path or repeat side effects blindly. The dispatcher
-uses stable message IDs and durable receipts, but delivery remains explicitly at least once.
-
-Unattended dispatcher turns must contain only work that can finish under their existing authority.
-Never enqueue work known to require human approval, and never let an automated worker raise an
-approval prompt. The interactive agent that owns the Task records the exact required action or
-decision on its pull request or Task, moves the Task to Waiting for Human with Current Agent clear,
-and stops until the human responds through GitHub or the direct conversation.
-
-The local operator commands, hook trust boundary, failure behavior, and recovery details are in
-[Dispatcher and named workers](../dispatcher/README.md).
+Operator commands, trust boundaries, recovery behavior, and the current migration boundary are in
+the [dispatcher guide](../dispatcher/README.md).
 
 ## Artifacts
 

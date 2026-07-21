@@ -2,13 +2,23 @@
 
 ## Adopted decisions
 
-### GitHub-only agent workflow
+### Persistent goal contexts
 
-All implementation, review, deployment, and live testing runs through GitHub. Repository changes
-normally use dedicated branches and pull requests. Pull request review findings and follow-up
-discussion are recorded on the pull request, not only in chat or local state. Named local workers
-and their dispatcher are an optional, recoverable delivery layer; GitHub project fields, issues,
-pull requests, and signed comments remain the shared source of ownership, status, and reasoning.
+Each actionable GitHub goal is owned by one persistent Codex context from initial planning through
+implementation, testing, adversarial review, fixes, merge, deployment, and acceptance proof.
+GitHub remains authoritative for the goal, constraints, current phase, durable evidence, and human
+gates; the context keeps its evolving technical plan internally.
+
+The dispatcher deterministically creates or resumes that context when relevant durable events
+change. A local browser terminal exposes the same live conversation for observation, steering,
+image paste, detach, and reattach. Context identity is attached to the goal rather than to a named
+worker, terminal, worktree, or process, and recovery must not depend on any of those resources
+remaining alive.
+
+Temporary subagents may provide bounded research or adversarial review inside the owning context.
+They do not become board owners or create a separate implementation/review handoff workflow. The
+board uses Backlog, Ready, In Progress, Human Needed, and Done; review and machine-event waits remain
+In Progress. Runtime state remains local and outside Git.
 
 ### Universal sign-in
 

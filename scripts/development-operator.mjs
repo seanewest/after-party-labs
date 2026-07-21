@@ -383,6 +383,12 @@ export async function provisionOperator(context, { checkpoint = () => {}, signal
 
   signal?.throwIfAborted();
   let user = existingUser;
+  if (!user && state.userId) {
+    user = await waitFor(
+      () => exactUser(graph, config.userPrincipalName),
+      (value) => value?.id === state.userId,
+    );
+  }
   if (!user) {
     user = await graph.request('/v1.0/users', {
       method: 'POST',
@@ -400,6 +406,10 @@ export async function provisionOperator(context, { checkpoint = () => {}, signal
     state.userId = user.id;
     await writePrivateJson(config.statePath, state);
     checkpoint('operator-user', 'created-with-discarded-random-password');
+    user = await waitFor(
+      () => exactUser(graph, config.userPrincipalName),
+      (value) => value?.id === state.userId,
+    );
   }
   if (user.id !== state.userId || user.displayName !== config.displayName || !user.accountEnabled || user.userType !== 'Member') {
     throw new Error('Development operator user does not match the tracked enabled identity.');

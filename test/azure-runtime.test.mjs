@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { createRuntimePlan, verifyRuntimeDeployment } from '../runtime/bootstrap.mjs';
@@ -16,12 +17,13 @@ const identityPrincipalId = '66666666-6666-4666-8666-666666666666';
 const graphPrincipalId = '77777777-7777-4777-8777-777777777777';
 const commit = 'a'.repeat(40);
 const digest = 'b'.repeat(64);
+const publishedRuntimeTemplate = JSON.parse(await readFile(new URL('../site/runtime-template.json', import.meta.url), 'utf8'));
 
 function response(body, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => body };
 }
 
-function providers(namespace) {
+function providers(namespace, registrationState = 'Registered') {
   const types = {
     'Microsoft.App': ['managedEnvironments', 'containerApps'],
     'Microsoft.ManagedIdentity': ['userAssignedIdentities'],
@@ -29,7 +31,7 @@ function providers(namespace) {
   };
   return {
     namespace,
-    registrationState: 'Registered',
+    registrationState,
     resourceTypes: types[namespace].map((resourceType) => ({ resourceType, locations: ['East US'] })),
   };
 }
@@ -59,7 +61,11 @@ function deployment() {
   };
 }
 
-function harness({ permissions = [{ actions: ['*'], notActions: [] }] } = {}) {
+function harness({
+  permissions = [{ actions: ['*'], notActions: [] }],
+  providerRegistrationState = 'Registered',
+  template = publishedRuntimeTemplate,
+} = {}) {
   const armCalls = [];
   const graphCalls = [];
   const assignments = [];
@@ -77,7 +83,7 @@ function harness({ permissions = [{ actions: ['*'], notActions: [] }] } = {}) {
     createRuntimePlan,
     verifyRuntimeDeployment,
     delay: async () => {},
-    fetchTemplate: async () => response({ $schema: 'https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#', resources: [] }),
+    fetchTemplate: async () => response(template),
     async fetchArm(url, options) {
       armCalls.push({ url, options });
       const parsed = new URL(url);
@@ -90,7 +96,7 @@ function harness({ permissions = [{ actions: ['*'], notActions: [] }] } = {}) {
       if (parsed.pathname.endsWith('/locations')) return response({ value: [{ name: 'eastus', displayName: 'East US' }] });
       if (parsed.pathname.endsWith('/Microsoft.Authorization/permissions')) return response({ value: permissions });
       for (const namespace of ['Microsoft.App', 'Microsoft.ManagedIdentity', 'Microsoft.Storage']) {
-        if (parsed.pathname.endsWith(`/providers/${namespace}`)) return response(providers(namespace));
+        if (parsed.pathname.endsWith(`/providers/${namespace}`)) return response(providers(namespace, providerRegistrationState));
       }
       if (parsed.pathname.includes('/deployments/')) return response(deployment());
       throw new Error(`Unexpected ARM URL: ${url}`);
@@ -150,10 +156,33 @@ test('deployment uses the reviewed template and grants every broad runtime role 
   assert.deepEqual(runtime.graphApplicationRoles, Object.keys(RUNTIME_GRAPH_APPLICATION_ROLES));
   assert.equal(Object.hasOwn(runtime, 'runtimeApiRole'), false);
   assert.equal(assignments.length, Object.keys(RUNTIME_GRAPH_APPLICATION_ROLES).length);
-  assert.equal(armCalls.some((call) => call.options.method === 'PUT'), true);
+  const deploymentPut = armCalls.find((call) => call.options.method === 'PUT');
+  assert.deepEqual(JSON.parse(deploymentPut.options.body).properties.template, publishedRuntimeTemplate);
 
   await installer.grantRuntimePermissions({ runtime });
   assert.equal(assignments.length, Object.keys(RUNTIME_GRAPH_APPLICATION_ROLES).length);
+});
+
+test('deployment rejects unsupported templates before provider registration', async () => {
+  const { installer, armCalls } = harness({
+    providerRegistrationState: 'NotRegistered',
+    template: {
+      ...publishedRuntimeTemplate,
+      $schema: 'https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#',
+    },
+  });
+  const plan = await installer.preflight(request);
+  await assert.rejects(installer.deploy(plan), (error) => error.code === 'template_invalid');
+  assert.equal(armCalls.some((call) => ['POST', 'PUT'].includes(call.options.method)), false);
+
+  const unsupportedVersion = harness({
+    template: {
+      ...publishedRuntimeTemplate,
+      $schema: 'https://schema.management.azure.com/schemas/9999-99-99/subscriptionDeploymentTemplate.json#',
+    },
+  });
+  const unsupportedPlan = await unsupportedVersion.installer.preflight(request);
+  await assert.rejects(unsupportedVersion.installer.deploy(unsupportedPlan), (error) => error.code === 'template_invalid');
 });
 
 test('insufficient Azure access fails before any deployment request', async () => {

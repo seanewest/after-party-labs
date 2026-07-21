@@ -4,6 +4,7 @@ const ARM = 'https://management.azure.com';
 const GRAPH = 'https://graph.microsoft.com/v1.0';
 const PROVIDERS = Object.freeze(['Microsoft.App', 'Microsoft.ManagedIdentity', 'Microsoft.Storage']);
 const TERMINAL_STATES = new Set(['Succeeded', 'Failed', 'Canceled']);
+const SUBSCRIPTION_TEMPLATE_SCHEMA = 'https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#';
 
 export const RUNTIME_GRAPH_APPLICATION_ROLES = Object.freeze({
   'Application.ReadWrite.All': '1bfefb4e-e0b5-418b-a88f-73c46d2cc8e9',
@@ -237,10 +238,6 @@ export function createAzureRuntimeInstaller({
   }
 
   async function deploy(plan) {
-    const token = await azureToken();
-    for (const namespace of plan.providerRegistrations || []) {
-      await waitForProvider(token, plan.subscription.id, namespace);
-    }
     let template;
     try {
       const response = await fetchTemplate(expected.templateUrl, { cache: 'no-store', redirect: 'error' });
@@ -250,8 +247,12 @@ export function createAzureRuntimeInstaller({
       if (error instanceof AzureRuntimeError) throw error;
       fail('template_invalid');
     }
-    if (template?.$schema?.includes('deploymentTemplate.json') !== true || !template?.resources) {
+    if (template?.$schema !== SUBSCRIPTION_TEMPLATE_SCHEMA || !Array.isArray(template?.resources)) {
       fail('template_invalid');
+    }
+    const token = await azureToken();
+    for (const namespace of plan.providerRegistrations || []) {
+      await waitForProvider(token, plan.subscription.id, namespace);
     }
     const deploymentPath = `/subscriptions/${plan.subscription.id}/providers/Microsoft.Resources/deployments/${encodeURIComponent(plan.deployment.name)}`;
     let deployment = await arm(token, deploymentPath, '2025-04-01', {

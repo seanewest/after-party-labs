@@ -178,7 +178,7 @@ export class GoalGateway {
           "set-cookie",
           `after_party_context=${this.#session}; HttpOnly; SameSite=Strict; Path=${base}`,
         );
-        return send(response, 200, terminalHtml(), "text/html; charset=utf-8");
+        return send(response, 200, terminalHtml(base), "text/html; charset=utf-8");
       }
       if (request.method === "GET" && url.pathname === `${base}/client.js`) {
         return send(response, 200, terminalClient(), "text/javascript; charset=utf-8");
@@ -341,7 +341,7 @@ export class GoalGateway {
   }
 }
 
-function terminalHtml(): string {
+function terminalHtml(base: string): string {
   return `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>After Party goal context</title><style>
@@ -356,13 +356,13 @@ button,input{font:inherit}button{background:#7aa2f7;border:0;padding:0 18px;colo
 <select id="mode"><option value="steer">Steer active turn</option><option value="followup">Queue follow-up</option></select>
 <button>Send</button><input id="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
 <span class="hint">Choose whether an active message steers now or waits as the next turn. Paste or choose an image.</span></form>
-<script src="./client.js"></script></body></html>`;
+<script src="${base}/client.js"></script></body></html>`;
 }
 
 function terminalClient(): string {
   return `const base=location.pathname.replace(/\\/$/,''), terminal=document.querySelector('#terminal'), state=document.querySelector('#state');
 const text=document.querySelector('#text'), image=document.querySelector('#image'), mode=document.querySelector('#mode'); let pasted=null;
-function append(v){terminal.textContent+=v+'\n';terminal.scrollTop=terminal.scrollHeight}
+function append(v){terminal.textContent+=v+'\\n';terminal.scrollTop=terminal.scrollHeight}
 const events=new EventSource(base+'/events');
 events.addEventListener('state',e=>{const v=JSON.parse(e.data);state.textContent=v.activeTurnId?'active':'connected';state.className='ok'});
 events.onmessage=e=>{const v=JSON.parse(e.data),p=v.params||{};

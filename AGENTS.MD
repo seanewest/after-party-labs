@@ -32,41 +32,51 @@ Refactoring is encouraged when it makes the system meaningfully simpler or more 
 
 Avoid overengineering.
 
-### Distributed agent work
+### Goal-context work
 
-All implementation, coordination, review, and live validation should be recoverable from GitHub issues, tasks, branches, pull requests, comments, and actions. Named local workers and their dispatcher may deliver work promptly, but GitHub remains authoritative; do not depend on private conversation context or unrecorded local state.
+GitHub goals are the durable source of product direction, constraints, acceptance criteria, current
+phase, evidence, and genuine human gates. One actionable goal has exactly one persistent Codex
+context that owns the work from planning through implementation, testing, review fixes, merge,
+deployment, and acceptance proof. Context identity belongs to the goal, not to a permanent worker
+persona.
 
-When GitHub records conflict, current project fields, the current issue body, native dependency relationships, and the latest explicit human direction take precedence. Older comments are historical context and must not resurrect superseded ownership, status, dependencies, authorization requirements, or blockers.
+The owning context keeps and revises its technical plan internally. It may create temporary
+subagents for bounded research or adversarial review, but those subagents do not claim board cards,
+open parallel ownership loops, or hand pull requests among permanent workers. The owning context
+decides how to apply findings and records material conclusions on the pull request.
 
-Repository changes should normally be developed on a dedicated branch and delivered through a pull request. Review findings and follow-up discussion for a pull request must be recorded on that pull request, not only in chat or a local report.
+Repository changes normally use a dedicated branch and pull request linked to the goal. The same
+context follows review comments, checks, merges, deployments, and human responses until the goal is
+complete. Review is an activity within that ownership, not a board state or handoff. If a pull
+request is ready and authorized to merge, merge it instead of waiting for a separate assignment.
 
-If an agent knows its assigned name, it should prefix every GitHub issue comment, pull request comment or review, and pull request title with `[NAME]` (for example, `[CORNHOLIO] ...`).
+The project board uses **Backlog**, **Ready**, **In Progress**, **Human Needed**, and **Done**.
+`Human Needed` is reserved for a product or architecture decision, new authority, a destructive or
+consequential live action outside standing authorization, or subjective acceptance that cannot be
+automated. Implementation, review, CI waits, event-driven sleeps, merge, deployment, and evidence
+gathering all remain `In Progress`.
 
-When told to `check the board`, follow the dispatch loop in [docs/development.md](docs/development.md#checking-the-board) until no actionable owned Task, Story reconciliation, review, or Ready Task remains. Stories are never claimed for implementation. Whenever a Task changes state, reconcile its parent Story before continuing.
+When GitHub records conflict, the current goal body and latest explicit human direction take
+precedence over historical comments and retired workflow fields. Do not use `Original Agent`,
+`Current Agent`, Story/Task routing, signed-persona comments, or cross-agent PR handoffs to decide
+work.
 
-A Story in Review may need proposal review before implementation or triage after failed human acceptance. Claim that review with a signed comment, set the Story's Current Agent while the review is active, leave Original Agent blank, and clear Current Agent when handing off the result.
+The dispatcher being built must start or resume the goal's one context when durable GitHub or
+runtime events change. Event handling must be durable and idempotent. Busy contexts retain ordered
+events; waiting for a machine-observable event ends the current model turn and the later event
+resumes the same context. Automated delivery must not create a hidden competing Codex client.
 
-For Tasks, Original Agent is the sticky creator of the first implementation pull request. Current Agent is the mutable owner of the next action across implementation, review, rework, and re-review. Clear Current Agent for unclaimed review, human waits, and Done; never overwrite Original Agent during a handoff.
+During the bootstrap migration, existing named-worker commands are compatibility plumbing only.
+They must not assign new goals or revive the retired ownership workflow. Until the goal-context
+path is implemented and proven, the context owning Goal #34 performs this work directly.
 
-Whenever a Task's Status or Current Agent changes, leave a concise signed comment on the Task stating what finished, the relevant pull request and current head when applicable, and who owns the next action or that it is unclaimed. Keep detailed implementation evidence and review findings on the pull request rather than duplicating them in the Task comment.
+Only board goals are dispatched automatically unless the human explicitly asks for other work.
+Keep runtime databases, credentials, transcripts, locks, and machine-specific state outside Git.
+See [development](docs/development.md#goal-context-workflow) and the
+[dispatcher guide](dispatcher/README.md) for the operating contract.
 
-After the GitHub handoff is complete, use the local dispatcher to notify a specific named worker when that worker owns the next action. The queue is only a delivery mechanism: a recipient must re-read GitHub before acting, and an unavailable dispatcher must not prevent or alter the GitHub workflow. Follow [Durable handoffs](docs/development.md#durable-handoffs).
-
-Never use an unattended dispatcher turn for an action that needs human approval, and never trigger an approval prompt from one. The interactive owning agent must put the exact request on the pull request or Task, move it to Waiting for Human with Current Agent clear, and stop until the human responds through the normal workflow.
-
-When a new blocking Task dependency is discovered, add `Depends on #<number>` to the blocked Task and add the same Task as its native GitHub blocked-by relationship before moving it to Backlog. Keep those two records synchronized if the dependency is removed or replaced; a comment alone is not dependency metadata.
-
-Only work represented by an issue card on the project board is eligible for this dispatch loop. Ignore issues without a card and pull requests without a linked board issue unless the human explicitly asks you to act on them.
-
-Most code will be written and reviewed by agents working on separate tasks. Leave enough context in issues, pull requests, review comments, tests, and documentation for another agent to understand the reasoning and continue the work independently.
-
-Implementation and review should normally be performed by separate agents. A reviewer should be able to understand the change from the repository, issue, pull request, tests, and evidence rather than relying on the implementer’s private context.
-
-If you are confident a pull request can be merged without issue, merge it instead of waiting for another instruction.
-
-A focused task should not quietly grow into a large redesign. When a task reveals a broader architectural problem, surface it clearly rather than either ignoring it or expanding the work without discussion.
-
-Use subagents when work can be divided into genuinely independent streams with little duplicated effort, coordination, or merge risk. Use judgment about whether the likely time saved justifies the additional usage; do not delegate merely to create parallel activity.
+A focused goal should not quietly grow into a materially different product or architecture. Put a
+clear decision and the available evidence on the goal when that boundary is reached.
 
 ### Autonomy and human interaction
 

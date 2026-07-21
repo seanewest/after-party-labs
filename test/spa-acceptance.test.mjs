@@ -5,12 +5,13 @@ import { validateLiveLockConfiguration, withDevelopmentLiveLock } from '../scrip
 import { driveMicrosoftRedirect, diagnosticUrl, readPublishedVersion, redactText, verifyReviewedConsentApplication } from '../scripts/spa-acceptance.mjs';
 import { parseArguments } from '../scripts/run-spa-acceptance.mjs';
 
-function locator({ isVisible = false, click = () => {}, fill = () => {}, count = 0, innerText = '' } = {}) {
+function locator({ isVisible = false, click = () => {}, fill = () => {}, press = () => {}, count = 0, innerText = '' } = {}) {
   return {
     first() { return this; },
     isVisible: async () => typeof isVisible === 'function' ? isVisible() : isVisible,
     click: async () => click(),
     fill: async (value) => fill(value),
+    press: async (key) => press(key),
     count: async () => count,
     innerText: async () => innerText,
   };
@@ -63,9 +64,9 @@ test('Microsoft steering submits only the dedicated UPN and selects certificate 
     url: () => stage === 'done' ? 'https://example.test/' : 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=9edaa951-658e-4be2-9623-ee906cb604b2',
     waitForLoadState: async () => {},
     locator(selector) {
-      if (selector === 'body') return locator({ innerText: stage === 'username' ? 'Sign in' : stage === 'options' ? 'Sign-in options' : stage === 'choice' ? 'Use a certificate or smart card' : 'Signed in' });
+      if (selector === 'body') return locator({ innerText: stage === 'username' ? 'Sign in' : stage === 'options' ? 'Contraseña\nOpciones de inicio de sesión' : stage === 'choice' ? 'Use a certificate or smart card' : stage === 'loading' ? 'Sign in' : 'Signed in' });
       if (selector === '#auth-status') return locator({ count: stage === 'done' ? 1 : 0 });
-      if (selector === 'input[name="passwd"]:visible') return locator({ isVisible: stage === 'options' });
+      if (selector === 'input[name="passwd"]:visible') return locator({ isVisible: stage === 'loading' || stage === 'options' });
       if (selector === 'input[name="loginfmt"]:visible') return locator({
         isVisible: () => {
           if (stage === 'loading') {
@@ -75,8 +76,8 @@ test('Microsoft steering submits only the dedicated UPN and selects certificate 
           return stage === 'username' || stage === 'options';
         },
         fill: (value) => { filled = value; },
+        press: (key) => { assert.equal(key, 'Enter'); stage = 'options'; },
       });
-      if (selector === '#idSIButton9, button[type="submit"]') return locator({ click: () => { stage = 'options'; } });
       if (selector.includes('data-value')) return locator();
       if (selector === '#signInAnotherWay') return locator();
       return locator();

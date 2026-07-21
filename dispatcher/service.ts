@@ -48,8 +48,8 @@ After=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=${systemdValue(checkout)}
-Environment=PATH=${systemdValue(pathEnvironment)}
+WorkingDirectory=${systemdPath(checkout)}
+Environment=${systemdValue(`PATH=${pathEnvironment}`)}
 ExecStart=${[nodePath, partyPath, "--database", databasePath, "run", "--owner", options.owner, "--project", String(options.projectNumber), "--checkout", checkout].map(systemdValue).join(" ")}
 Restart=on-failure
 RestartSec=3
@@ -147,6 +147,17 @@ function primaryCheckout(checkout: string): string {
 
 function systemdValue(value: string): string {
   return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
+
+function systemdPath(value: string): string {
+  if (!value.startsWith("/") || /[\r\n\0]/.test(value)) {
+    throw new Error("systemd working directory must be an absolute single-line path.");
+  }
+  return value
+    .replaceAll("%", "%%")
+    .replaceAll("\\", "\\x5c")
+    .replaceAll(" ", "\\x20")
+    .replaceAll("\t", "\\x09");
 }
 
 function runCommand(command: string, arguments_: string[]): string {

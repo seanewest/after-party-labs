@@ -115,7 +115,7 @@ export async function driveMicrosoftRedirect({
     const text = await visibleText(page);
     const aadsts = aadstsError(text);
     if (aadsts) throw new Error(aadsts);
-    if (/conditional access|you cannot access this right now|sign-in was blocked/i.test(text)) {
+    if (/you (?:cannot|can['’]t) access this right now|sign[- ]in was blocked|access has been blocked|sign-in was successful but does not meet the criteria|blocked by (?:your organization's )?conditional access|does not meet (?:your organization's )?conditional access/i.test(text)) {
       throw new Error(`Microsoft Conditional Access blocked the dedicated operator: ${text}`);
     }
     if (await clickFirst([

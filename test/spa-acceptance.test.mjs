@@ -109,20 +109,38 @@ test('Microsoft steering fails closed when a password or Conditional Access page
     getByRole() { return locator(); },
   });
   await assert.rejects(() => driveMicrosoftRedirect({ page: page('Enter password', true), spaOrigin: 'https://example.test', userPrincipalName: 'operator@example.test', timeoutMs: 100, passwordRoutingGraceMs: 0 }), /requested a password/);
-  await assert.rejects(() => driveMicrosoftRedirect({ page: page('You cannot access this right now. Conditional Access policy.'), spaOrigin: 'https://example.test', userPrincipalName: 'operator@example.test', timeoutMs: 100 }), /Conditional Access blocked/);
+  await assert.rejects(() => driveMicrosoftRedirect({ page: page("You can’t access this right now. Your sign-in was successful but does not meet the criteria to access this resource."), spaOrigin: 'https://example.test', userPrincipalName: 'operator@example.test', timeoutMs: 100 }), /Conditional Access blocked/);
 });
 
 test('Microsoft steering refuses unplanned consent and the guard verifies the exact reviewed app permissions', async () => {
   const consentPage = {
     url: () => 'https://login.microsoftonline.com/92563293-315c-4b6c-9b90-bcb47ee8c970/adminconsent?client_id=9edaa951-658e-4be2-9623-ee906cb604b2',
     locator(selector) {
-      if (selector === 'body') return locator({ innerText: 'Permissions requested by After Party' });
+      if (selector === 'body') return locator({ innerText: "Permissions requested by After Party. Read and write your organization's conditional access policies." });
       return locator();
     },
     getByText() { return locator(); },
     getByRole() { return locator(); },
   };
   await assert.rejects(() => driveMicrosoftRedirect({ page: consentPage, spaOrigin: 'https://example.test', userPrincipalName: 'operator@example.test', timeoutMs: 100 }), /unplanned interactive consent/);
+
+  let consentStage = 'consent';
+  const checkpoints = [];
+  const approvedConsentPage = {
+    url: () => consentStage === 'done' ? 'https://example.test/' : consentPage.url(),
+    waitForLoadState: async () => {},
+    locator(selector) {
+      if (selector === 'body') return locator({ innerText: "Permissions requested by After Party. Read and write your organization's conditional access policies." });
+      if (selector === '#auth-status') return locator({ count: consentStage === 'done' ? 1 : 0 });
+      return locator();
+    },
+    getByText() { return locator(); },
+    getByRole(role, { name } = {}) {
+      return locator({ isVisible: role === 'button' && name?.test('Accept') && consentStage === 'consent', click: () => { consentStage = 'done'; } });
+    },
+  };
+  assert.equal(await driveMicrosoftRedirect({ page: approvedConsentPage, spaOrigin: 'https://example.test', userPrincipalName: 'operator@example.test', allowConsent: true, timeoutMs: 1_000, checkpoint: (...entry) => checkpoints.push(entry) }), true);
+  assert.deepEqual(checkpoints, [['microsoft-consent', 'accepted-for-after-party']]);
 
   const resources = [
     ['00000003-0000-0000-c000-000000000000', [

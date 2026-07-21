@@ -147,7 +147,22 @@ export class GhProjectGoalSource implements GoalGitHubSource {
     );
     for (const link of goal.linkedPullRequests) {
       const parsed = parsePullRequestUrl(link);
-      if (!parsed) {
+      if (!parsed || parsed.repository.toLowerCase() !== goal.repository.toLowerCase()) {
+        continue;
+      }
+      const pullMetadata = object(
+        JSON.parse(await this.#run([
+          "api", "--method", "GET",
+          `repos/${parsed.repository}/pulls/${parsed.number}`,
+        ])),
+        "linked pull request metadata",
+      );
+      const base = object(pullMetadata.base, "linked pull request base");
+      const baseRepository = object(base.repo, "linked pull request base repository");
+      if (
+        !isTrustedAssociation(pullMetadata.author_association) ||
+        optionalString(baseRepository.full_name)?.toLowerCase() !== goal.repository.toLowerCase()
+      ) {
         continue;
       }
       const pullRequest = object(

@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import {
   CodexAppServerClient,
+  CodexAppServerError,
   validateLocalAppServerEndpoint,
   type CodexAppServerNotification,
   type CodexUserInput,
@@ -262,12 +263,12 @@ export class GoalGateway {
       throw new Error("The goal context became busy; retry as a steering message.");
     }
     try {
-      this.#store.updateRuntime(this.#options.contextId, { threadHasActivity: true });
       const turn = await this.#client.startTurn(
         this.#threadId,
         values,
         submission,
       );
+      this.#store.updateRuntime(this.#options.contextId, { threadHasActivity: true });
       if (!this.#terminalTurns.has(turn.id)) this.#activeTurnId = turn.id;
       if (uploads.length > 0) {
         this.#turnUploads.set(turn.id, uploads);
@@ -543,6 +544,8 @@ function snapshotHasActivity(snapshot: Record<string, unknown>): boolean {
 }
 
 function isMissingEmptyThreadError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /thread|rollout/i.test(message) && /not found|does not exist|missing/i.test(message);
+  return error instanceof CodexAppServerError &&
+    error.rpcMethod === "thread/resume" &&
+    /thread|rollout/i.test(error.message) &&
+    /not found|does not exist|missing/i.test(error.message);
 }

@@ -146,6 +146,12 @@ test("GitHub goal source records linked deployment and deployment-status events"
           headRefOid: "abc123", statusCheckRollup: [],
         });
       }
+      if (args.includes("repos/seanewest/after-party-labs/pulls/70")) {
+        return JSON.stringify({
+          author_association: "MEMBER",
+          base: { repo: { full_name: goal.repository } },
+        });
+      }
       if (joined.includes("/deployments/5/statuses")) {
         return JSON.stringify([[{ id: 6, state: "success", updated_at: "2026-07-20T12:03:00Z" }]]);
       }

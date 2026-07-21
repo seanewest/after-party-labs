@@ -89,7 +89,6 @@ export class GoalEventDelivery {
             );
             observed = null;
           }
-          this.#store.updateRuntime(context.id, { threadHasActivity: true });
           const turn = await client.startTurn(
             context.threadId,
             [{
@@ -102,6 +101,7 @@ export class GoalEventDelivery {
             }],
             deliveryClientId,
           );
+          this.#store.updateRuntime(context.id, { threadHasActivity: true });
           turnId = turn.id;
         }
         if (!this.#store.replaceOperation(context.id, submitting, `turn:${turnId}`)) {

@@ -47,6 +47,7 @@ export interface CodexAppServerClientOptions {
 }
 
 interface PendingRequest {
+  method: string;
   resolve(value: unknown): void;
   reject(error: Error): void;
   timer: NodeJS.Timeout;
@@ -58,7 +59,20 @@ interface TerminalWaiter {
   timer: NodeJS.Timeout;
 }
 
-export class CodexAppServerError extends Error {}
+export class CodexAppServerError extends Error {
+  readonly rpcMethod: string | null;
+  readonly rpcCode: string | number | null;
+
+  constructor(
+    message: string,
+    rpcMethod: string | null = null,
+    rpcCode: string | number | null = null,
+  ) {
+    super(message);
+    this.rpcMethod = rpcMethod;
+    this.rpcCode = rpcCode;
+  }
+}
 
 /**
  * Small, version-pinned JSON-RPC client used by the Task #63 prototype.
@@ -262,7 +276,7 @@ export class CodexAppServerClient {
         this.#pending.delete(id);
         reject(new CodexAppServerError(`Codex app-server request ${method} timed out.`));
       }, this.#requestTimeoutMs);
-      this.#pending.set(id, { resolve, reject, timer });
+      this.#pending.set(id, { method, resolve, reject, timer });
       this.#socket.send(JSON.stringify({ id, method, params }));
     });
   }
@@ -324,6 +338,10 @@ export class CodexAppServerClient {
           new CodexAppServerError(
             `Codex app-server request failed (${String(error.code ?? "unknown")}): ` +
               `${String(error.message ?? "unknown error")}`,
+            pending.method,
+            typeof error.code === "string" || typeof error.code === "number"
+              ? error.code
+              : null,
           ),
         );
       } else {

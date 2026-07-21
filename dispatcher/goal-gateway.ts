@@ -181,7 +181,7 @@ export class GoalGateway {
         return send(response, 200, terminalHtml(base), "text/html; charset=utf-8");
       }
       if (request.method === "GET" && url.pathname === `${base}/client.js`) {
-        return send(response, 200, terminalClient(), "text/javascript; charset=utf-8");
+        return send(response, 200, goalTerminalClient(), "text/javascript; charset=utf-8");
       }
       if (request.method === "GET" && url.pathname === `${base}/events`) {
         if (!this.#validSession(request)) {
@@ -355,14 +355,19 @@ button,input{font:inherit}button{background:#7aa2f7;border:0;padding:0 18px;colo
 <pre id="terminal"></pre><form id="form"><textarea id="text" placeholder="Message or steer this context"></textarea>
 <select id="mode"><option value="steer">Steer active turn</option><option value="followup">Queue follow-up</option></select>
 <button>Send</button><input id="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
-<span class="hint">Choose whether an active message steers now or waits as the next turn. Paste or choose an image.</span></form>
+<span class="hint">Choose whether an active message steers now or waits as the next turn. Paste anywhere or choose an image. <span id="attachment"></span></span></form>
 <script src="${base}/client.js"></script></body></html>`;
 }
 
-function terminalClient(): string {
+export function goalTerminalClient(): string {
   return `const base=location.pathname.replace(/\\/$/,''), terminal=document.querySelector('#terminal'), state=document.querySelector('#state');
-const text=document.querySelector('#text'), image=document.querySelector('#image'), mode=document.querySelector('#mode'); let pasted=null;
+const text=document.querySelector('#text'), image=document.querySelector('#image'), mode=document.querySelector('#mode'), attachment=document.querySelector('#attachment'); let pasted=null;
 function append(v){terminal.textContent+=v+'\\n';terminal.scrollTop=terminal.scrollHeight}
+function supportedImage(file){return file&&/^image\\/(png|jpeg|webp|gif)$/.test(file.type)}
+function showAttachment(file,prefix){attachment.textContent=file?(prefix+' '+(file.name||'image')+' ready'):''}
+function pastedImage(event){const data=event.clipboardData;if(!data)return null;
+ for(const item of data.items||[]){if(item.type&&item.type.startsWith('image/')){const file=item.getAsFile();if(supportedImage(file))return file}}
+ for(const file of data.files||[]){if(supportedImage(file))return file}return null}
 const events=new EventSource(base+'/events');
 events.addEventListener('state',e=>{const v=JSON.parse(e.data);state.textContent=v.activeTurnId?'active':'connected';state.className='ok'});
 events.onmessage=e=>{const v=JSON.parse(e.data),p=v.params||{};
@@ -372,12 +377,13 @@ events.onmessage=e=>{const v=JSON.parse(e.data),p=v.params||{};
  if(v.method==='conversation/tool'){append('$ '+(p.text||''));return}
  if(v.method==='conversation/error')append('error: '+(p.message||'unknown error'))};
 events.onerror=()=>{state.textContent='reconnecting';state.className=''};
-text.addEventListener('paste',e=>{for(const item of e.clipboardData.items){if(item.type.startsWith('image/')){pasted=item.getAsFile();image.value='';e.preventDefault();break}}});
+document.addEventListener('paste',e=>{const file=pastedImage(e);if(file){pasted=file;image.value='';showAttachment(file,'Pasted');e.preventDefault()}});
+image.addEventListener('change',()=>{pasted=null;showAttachment(image.files[0],'Selected')});
 text.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();document.querySelector('#form').requestSubmit()}});
 document.querySelector('#form').addEventListener('submit',async e=>{e.preventDefault();const file=pasted||image.files[0];let encoded;
  if(file) encoded=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(file)});
  const response=await fetch(base+'/input',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text:text.value,image:encoded,imageName:file&&file.name,mode:mode.value})});
- const result=await response.json();if(!response.ok){append('error '+result.error);return}append(result.steered?'[steered]':(mode.value==='followup'?'[follow-up queued]':'[submitted]'));text.value='';image.value='';pasted=null});
+ const result=await response.json();if(!response.ok){append('error '+result.error);return}append(result.steered?'[steered]':(mode.value==='followup'?'[follow-up queued]':'[submitted]'));text.value='';image.value='';pasted=null;showAttachment(null,'')});
 `;
 }
 

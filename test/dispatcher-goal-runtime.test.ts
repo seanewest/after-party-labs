@@ -13,7 +13,7 @@ import type {
 } from "../dispatcher/app-server-client.ts";
 import { GoalContextStore } from "../dispatcher/goal-context.ts";
 import { GoalEventDelivery } from "../dispatcher/goal-event-delivery.ts";
-import { GoalGateway } from "../dispatcher/goal-gateway.ts";
+import { GoalGateway, goalTerminalClient } from "../dispatcher/goal-gateway.ts";
 import {
   boundedGitHubBackoff,
   GhProjectGoalSource,
@@ -493,6 +493,65 @@ test("loopback gateway reconnects a thread and accepts text plus image", async (
     const clientSource = await script.text();
     assert.match(clientSource, /new EventSource\(base\+'\/events'\)/);
     assert.doesNotThrow(() => new Function(clientSource));
+    const pastedImageData =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    const documentListeners = new Map<string, (event: Record<string, unknown>) => unknown>();
+    const elementListeners = new Map<string, (event: Record<string, unknown>) => unknown>();
+    const node = () => ({
+      textContent: "", value: "", files: [] as unknown[], scrollHeight: 0, scrollTop: 0,
+      addEventListener(type: string, listener: (event: Record<string, unknown>) => unknown) {
+        elementListeners.set(type, listener);
+      },
+      requestSubmit() {},
+    });
+    const terminal = node();
+    const state = node();
+    const text = node();
+    const imageInput = node();
+    const mode = node();
+    const attachment = node();
+    const form = node();
+    const elements = new Map<string, ReturnType<typeof node>>([
+      ["#terminal", terminal], ["#state", state], ["#text", text], ["#image", imageInput],
+      ["#mode", mode], ["#attachment", attachment], ["#form", form],
+    ]);
+    let submittedBody = "";
+    const executeClient = new Function(
+      "location", "document", "EventSource", "FileReader", "fetch", clientSource,
+    );
+    executeClient(
+      { pathname: `/contexts/${value.context.id}` },
+      {
+        querySelector: (selector: string) => elements.get(selector),
+        addEventListener: (
+          type: string,
+          listener: (event: Record<string, unknown>) => unknown,
+        ) => documentListeners.set(type, listener),
+      },
+      class { addEventListener() {} },
+      class {
+        result = "";
+        onload?: () => void;
+        readAsDataURL() {
+          this.result = pastedImageData;
+          this.onload?.();
+        }
+      },
+      async (_url: string, options: { body: string }) => {
+        submittedBody = options.body;
+        return { ok: true, json: async () => ({ steered: false }) };
+      },
+    );
+    const pastedFile = { type: "image/png", name: "screenshot.png" };
+    let pastePrevented = false;
+    await documentListeners.get("paste")!({
+      clipboardData: { items: [], files: [pastedFile] },
+      preventDefault: () => { pastePrevented = true; },
+    });
+    assert.equal(pastePrevented, true);
+    assert.equal(attachment.textContent, "Pasted screenshot.png ready");
+    await elementListeners.get("submit")!({ preventDefault() {} });
+    assert.equal(JSON.parse(submittedBody).image, pastedImageData);
     const cookie = page.headers.get("set-cookie")?.split(";")[0];
     assert.ok(cookie);
     const image =

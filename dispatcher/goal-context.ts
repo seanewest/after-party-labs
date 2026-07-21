@@ -91,6 +91,14 @@ export interface GoalEvent {
   updatedAt: number;
 }
 
+export interface ExternalWaitRecord {
+  key: string;
+  failureCount: number;
+  nextAttemptAt: number;
+  lastError: string;
+  updatedAt: number;
+}
+
 export interface GoalContextStoreOptions {
   now?: () => number;
   id?: () => string;
@@ -157,6 +165,14 @@ const schema = `
     name TEXT PRIMARY KEY,
     owner TEXT NOT NULL,
     expires_at INTEGER NOT NULL
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS goal_external_waits (
+    key TEXT PRIMARY KEY,
+    failure_count INTEGER NOT NULL CHECK (failure_count > 0),
+    next_attempt_at INTEGER NOT NULL,
+    last_error TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
   ) STRICT;
 `;
 
@@ -334,6 +350,46 @@ export class GoalContextStore {
         nonEmpty(owner, "coordination lock owner"),
       );
     return result.changes === 1;
+  }
+
+  getExternalWait(key: string): ExternalWaitRecord | null {
+    const row = this.#database.prepare(
+      "SELECT * FROM goal_external_waits WHERE key = ?",
+    ).get(nonEmpty(key, "external wait key")) as Row | undefined;
+    return row ? mapExternalWait(row) : null;
+  }
+
+  recordExternalWait(input: {
+    key: string;
+    failureCount: number;
+    nextAttemptAt: number;
+    lastError: string;
+  }): ExternalWaitRecord {
+    const key = nonEmpty(input.key, "external wait key");
+    const failureCount = positiveInteger(input.failureCount, "external wait failure count");
+    const nextAttemptAt = nonNegativeInteger(
+      input.nextAttemptAt,
+      "external wait next attempt",
+    );
+    const lastError = conciseWaitError(input.lastError);
+    const now = this.#now();
+    this.#database.prepare(`
+      INSERT INTO goal_external_waits (
+        key, failure_count, next_attempt_at, last_error, updated_at
+      ) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET
+        failure_count = excluded.failure_count,
+        next_attempt_at = excluded.next_attempt_at,
+        last_error = excluded.last_error,
+        updated_at = excluded.updated_at
+    `).run(key, failureCount, nextAttemptAt, lastError, now);
+    return this.getExternalWait(key)!;
+  }
+
+  clearExternalWait(key: string): boolean {
+    return this.#database.prepare(
+      "DELETE FROM goal_external_waits WHERE key = ?",
+    ).run(nonEmpty(key, "external wait key")).changes === 1;
   }
 
   tryClaimOperation(id: string, operation: string): boolean {
@@ -742,6 +798,16 @@ function mapEvent(row: Row): GoalEvent {
   };
 }
 
+function mapExternalWait(row: Row): ExternalWaitRecord {
+  return {
+    key: stringValue(row.key, "external wait key"),
+    failureCount: numberValue(row.failure_count, "external wait failure count"),
+    nextAttemptAt: numberValue(row.next_attempt_at, "external wait next attempt"),
+    lastError: stringValue(row.last_error, "external wait error"),
+    updatedAt: numberValue(row.updated_at, "external wait update time"),
+  };
+}
+
 function field<T>(update: GoalRuntimeUpdate, key: keyof GoalRuntimeUpdate, fallback: T): T {
   return Object.prototype.hasOwnProperty.call(update, key)
     ? ((update as Record<keyof GoalRuntimeUpdate, unknown>)[key] as T)
@@ -774,6 +840,13 @@ function nonEmpty(value: string, label: string): string {
 
 function optionalNonEmpty(value: string | null | undefined): string | null {
   return value == null ? null : nonEmpty(value, "optional value");
+}
+
+function conciseWaitError(value: string): string {
+  const normalized = nonEmpty(value, "external wait error")
+    .replaceAll(/\s+/g, " ")
+    .slice(0, 1_000);
+  return normalized || "external dependency unavailable";
 }
 
 function positiveInteger(value: number, label: string): number {

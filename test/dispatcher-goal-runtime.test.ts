@@ -294,11 +294,11 @@ test("goal poller provisions once and deduplicates durable snapshots", async () 
     const poller = new GoalGitHubPoller(source, value.store, { provision });
     assert.deepEqual(await poller.poll(), {
       goals: 1, provisioned: 1, recorded: 1, duplicates: 0, skipped: 0,
-      discoveryFailed: false, failures: [],
+      discoveryFailed: false, deferredUntil: null, failures: [],
     });
     assert.deepEqual(await poller.poll(), {
       goals: 1, provisioned: 0, recorded: 0, duplicates: 1, skipped: 0,
-      discoveryFailed: false, failures: [],
+      discoveryFailed: false, deferredUntil: null, failures: [],
     });
     assert.equal(recorded, 1);
   } finally {
@@ -342,7 +342,36 @@ test("GitHub retry policy is exponential, bounded, and recognizes capacity failu
   assert.equal(isTransientGitHubFailure("invalid project configuration"), false);
 });
 
-test("continuous goal runner backs off in-process instead of exiting on discovery outage", async () => {
+test("external wait checkpoint is concise, durable across restart, and clearable", () => {
+  const directory = mkdtempSync(join(tmpdir(), "after-party-external-wait-"));
+  const database = join(directory, "dispatcher.sqlite");
+  try {
+    const first = new GoalContextStore(database, { now: () => 100 });
+    assert.deepEqual(first.recordExternalWait({
+      key: "github-project:seanewest:1",
+      failureCount: 2,
+      nextAttemptAt: 500,
+      lastError: "GraphQL\n  capacity   unavailable",
+    }), {
+      key: "github-project:seanewest:1",
+      failureCount: 2,
+      nextAttemptAt: 500,
+      lastError: "GraphQL capacity unavailable",
+      updatedAt: 100,
+    });
+    first.close();
+
+    const second = new GoalContextStore(database);
+    assert.equal(second.getExternalWait("github-project:seanewest:1")?.nextAttemptAt, 500);
+    assert.equal(second.clearExternalWait("github-project:seanewest:1"), true);
+    assert.equal(second.getExternalWait("github-project:seanewest:1"), null);
+    second.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("continuous goal runner honors durable backoff across process restart", async () => {
   const directory = mkdtempSync(join(tmpdir(), "after-party-goal-backoff-"));
   const bin = join(directory, "bin");
   const calls = join(directory, "gh-calls");
@@ -351,28 +380,58 @@ test("continuous goal runner backs off in-process instead of exiting on discover
   mkdirSync(bin, { mode: 0o700 });
   writeFileSync(gh, "#!/bin/sh\necho call >> \"$GH_CALL_LOG\"\necho 'GraphQL capacity unavailable' >&2\nexit 1\n", { mode: 0o700 });
   chmodSync(gh, 0o700);
-  const child = spawn(process.execPath, [
-    join(process.cwd(), "dispatcher", "party.ts"),
-    "--database", database,
-    "run", "--owner", "seanewest", "--project", "1",
-    "--checkout", process.cwd(), "--interval-ms", "5",
-    "--github-backoff-ms", "20", "--github-max-backoff-ms", "40",
-  ], {
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, GH_CALL_LOG: calls },
-    stdio: ["ignore", "ignore", "pipe"],
-  });
-  let stderr = "";
-  child.stderr!.setEncoding("utf8");
-  child.stderr!.on("data", (chunk) => { stderr += String(chunk); });
+  const start = (once = false) => {
+    const arguments_ = [
+      join(process.cwd(), "dispatcher", "party.ts"),
+      "--database", database,
+      "run", "--owner", "seanewest", "--project", "1",
+      "--checkout", process.cwd(), "--interval-ms", "5",
+      "--github-backoff-ms", "500", "--github-max-backoff-ms", "1000",
+    ];
+    if (once) arguments_.push("--once");
+    const child = spawn(process.execPath, arguments_, {
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, GH_CALL_LOG: calls },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr!.setEncoding("utf8");
+    child.stderr!.on("data", (chunk) => { stderr += String(chunk); });
+    return { child, stderr: () => stderr };
+  };
+  let running = start();
   try {
-    await waitUntil(() => stderr.includes("attempt 2"), 2_000);
-    assert.equal(child.exitCode, null);
-    assert.match(stderr, /retrying in 20ms.*attempt 1/s);
-    assert.match(stderr, /retrying in 40ms.*attempt 2/s);
-    assert.ok(readFileSync(calls, "utf8").trim().split("\n").length >= 2);
+    await waitUntil(() => running.stderr().includes("attempt 1"), 2_000);
+    assert.match(running.stderr(), /checkpointed retry in 500ms.*attempt 1/s);
+    running.child.kill("SIGTERM");
+    await new Promise<void>((resolve) => running.child.once("close", () => resolve()));
+    const callsBeforeRestart = readFileSync(calls, "utf8").trim().split("\n").length;
+    const checkpointStore = new GoalContextStore(database);
+    const localContext = checkpointStore.createOrGet({
+      repository: "seanewest/after-party-labs",
+      issueNumber: 34,
+      worktreePath: process.cwd(),
+      branch: "agent/goal-34-durable-waits",
+    });
+    assert.equal(localContext.lastHead, null);
+    checkpointStore.close();
+
+    running = start(true);
+    await new Promise<void>((resolve) => running.child.once("close", () => resolve()));
+    const reconciledStore = new GoalContextStore(database);
+    assert.notEqual(reconciledStore.require(localContext.id).lastHead, null);
+    reconciledStore.close();
+    assert.equal(readFileSync(calls, "utf8").trim().split("\n").length, callsBeforeRestart);
+    assert.equal(running.stderr(), "");
+
+    running = start();
+    await waitUntil(() => readFileSync(calls, "utf8").trim().split("\n").length > callsBeforeRestart, 2_000);
+    await waitUntil(() => running.stderr().includes("attempt 2"), 2_000);
+    assert.match(running.stderr(), /checkpointed retry in 1000ms.*attempt 2/s);
   } finally {
-    child.kill("SIGTERM");
-    await new Promise<void>((resolve) => child.once("close", () => resolve()));
+    if (running.child.exitCode === null) {
+      running.child.kill("SIGTERM");
+      await new Promise<void>((resolve) => running.child.once("close", () => resolve()));
+    }
     rmSync(directory, { recursive: true, force: true });
   }
 });

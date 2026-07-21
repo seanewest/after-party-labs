@@ -120,10 +120,21 @@ same context. `open` resolves or launches the safe loopback browser route. `stat
 `run --once` performs one bounded reconciliation and event-delivery pass for schedulers and tests.
 In continuous mode, project discovery and transient GitHub/GraphQL capacity failures stay inside
 the same dispatcher process. Existing durable events continue to reconcile, while GitHub polling
-uses exponential backoff from five seconds to a five-minute maximum and resets after a successful
-poll. For failure injection, the bounds can be shortened with `--github-backoff-ms` and
+persists the failure count, concise reason, and exact next-attempt time in SQLite. Restarts honor
+that checkpoint, skip the unavailable interface until it is due, and use exponential backoff from
+five seconds to a five-minute maximum. A successful poll clears the wait. Deferred GitHub work
+does not block local runtime reconciliation or event delivery, and no unchanged status is emitted
+while the retry deadline is pending. For failure injection, the bounds can be shortened with `--github-backoff-ms` and
 `--github-max-backoff-ms`; production service installation uses the safe defaults. The user unit
 also limits unexpected process restarts to five within five minutes.
+
+Model turns never remain alive merely to wait for time, CI, quota, deployment, or another
+machine-observable event. Do productive offline work or use a standard alternative interface
+first; then persist one concise checkpoint, register a deterministic timer or event continuation,
+and end the turn. If automated wake-up is unavailable, report the blocker once and stop. Services
+use bounded exponential backoff, not crash loops or rapid external polling. Eventually consistent
+administrative changes such as project-field updates do not block code, tests, pushes, or other
+independent progress.
 
 For a bounded first cutover, the maintainer may explicitly start one local `party run` process.
 That runner observes Ready goals and creates their routes; it is not a separate goal owner, and no

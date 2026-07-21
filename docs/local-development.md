@@ -43,3 +43,6 @@ npm test
 The tests run offline and cover Microsoft sign-in and installation, tenant-runtime planning and
 verification, Pages build metadata, and the local static server. CI also compiles the Bicep runtime
 with the pinned Bicep CLI version.
+
+For the dedicated certificate operator, controlled browser flow, tenant-wide development lease,
+and deployed acceptance command, see [Agent-operated SPA acceptance](agent-operated-spa.md).

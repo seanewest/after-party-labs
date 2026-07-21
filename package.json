@@ -14,6 +14,8 @@
     "build:pages": "node scripts/build-pages.mjs --source site --output dist --commit local --base-path /after-party-labs/",
     "check:types": "tsc --noEmit",
     "dev": "node scripts/serve-pages.mjs",
+    "operator": "node scripts/manage-development-operator.mjs",
+    "spa:acceptance": "node scripts/run-spa-acceptance.mjs",
     "party": "node dispatcher/party.ts",
     "party:queue": "node dispatcher/cli.ts",
     "poll:github": "node dispatcher/github-cli.ts",
@@ -25,7 +27,9 @@
     "@azure/msal-browser": "5.17.1"
   },
   "devDependencies": {
+    "@azure/identity": "4.13.1",
     "@types/node": "24.13.3",
+    "playwright": "1.61.0",
     "typescript": "7.0.2"
   }
 }

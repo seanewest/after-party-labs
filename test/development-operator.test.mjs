@@ -45,6 +45,7 @@ function fakeCloud(operator) {
     mappings: [],
     directoryAssignment: null,
     ownerAssignment: null,
+    hiddenUserReads: 0,
     calls: [],
   };
   const collection = (value) => ({ value: value ? [value] : [] });
@@ -63,11 +64,17 @@ function fakeCloud(operator) {
     }
     if (path.endsWith(`/certificateBasedAuthConfiguration/${trustId}`) && method === 'GET') return data.trust;
     if (path.endsWith(`/certificateBasedAuthConfiguration/${trustId}`) && method === 'DELETE') { data.trust = null; return null; }
-    if (path.startsWith('/v1.0/users?')) return collection(data.user);
+    if (path.startsWith('/v1.0/users?')) {
+      if (data.user && data.hiddenUserReads > 0) {
+        data.hiddenUserReads -= 1;
+        return collection(null);
+      }
+      return collection(data.user);
+    }
     if (path === '/v1.0/users' && method === 'POST') {
       data.user = { id: userId, displayName: body.displayName, userPrincipalName: body.userPrincipalName, accountEnabled: true, userType: 'Member' };
       assert.equal(typeof body.passwordProfile.password, 'string');
-      return data.user;
+      return { id: userId };
     }
     if (path.startsWith('/v1.0/groups?')) return collection(data.group);
     if (path === '/v1.0/groups' && method === 'POST') {
@@ -182,6 +189,18 @@ test('revoke resumes from partial state and removes remaining privilege without 
   assert.equal(cloud.data.user.accountEnabled, false);
   assert.equal(cloud.data.trust, null);
   assert.equal(cloud.data.group, null);
+});
+
+test('provision waits for a checkpointed user instead of attempting a duplicate create', async (t) => {
+  const { operator } = await prepared(t);
+  const cloud = fakeCloud(operator);
+  await provisionOperator(cloud.context);
+  cloud.data.hiddenUserReads = 1;
+  await provisionOperator(cloud.context);
+  assert.equal(
+    cloud.data.calls.filter((call) => call.path === '/v1.0/users' && call.method === 'POST').length,
+    1,
+  );
 });
 
 test('revoke discovers deterministic broad roles after a create-success state-write crash', async (t) => {

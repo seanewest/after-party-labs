@@ -45,6 +45,8 @@ export function installDispatcherService(
 [Unit]
 Description=After Party persistent goal-context dispatcher
 After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple

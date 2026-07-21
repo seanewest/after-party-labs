@@ -14,8 +14,10 @@ import {
 import { GoalEventDelivery } from "./goal-event-delivery.ts";
 import { GoalGateway } from "./goal-gateway.ts";
 import {
+  boundedGitHubBackoff,
   GhProjectGoalSource,
   GoalGitHubPoller,
+  isTransientGitHubFailure,
   type BoardGoal,
 } from "./goal-github.ts";
 import {
@@ -278,7 +280,14 @@ async function runGoalLoop(
   if (interval < 1) {
     throw new Error("--interval-ms must be positive.");
   }
+  const githubBackoffMs = integerOption(parsed, "github-backoff-ms") ??
+    Math.max(interval, 5_000);
+  const githubMaxBackoffMs = integerOption(parsed, "github-max-backoff-ms") ??
+    300_000;
+  boundedGitHubBackoff(1, githubBackoffMs, githubMaxBackoffMs);
+  let consecutiveGitHubFailures = 0;
   do {
+    let nextDelay = interval;
     const store = new GoalContextStore(databasePath);
     try {
       const source = new GhProjectGoalSource({ owner, projectNumber });
@@ -355,10 +364,27 @@ async function runGoalLoop(
           (value) => value.result.outcome === "failed",
         ) ? 1 : 0;
       }
+      const retryableGitHubFailure = github.discoveryFailed ||
+        github.failures.some((failure) => isTransientGitHubFailure(failure.error));
+      if (retryableGitHubFailure) {
+        consecutiveGitHubFailures += 1;
+        nextDelay = boundedGitHubBackoff(
+          consecutiveGitHubFailures,
+          githubBackoffMs,
+          githubMaxBackoffMs,
+        );
+        process.stderr.write(
+          `GitHub polling unavailable; retrying in ${nextDelay}ms ` +
+          `(attempt ${consecutiveGitHubFailures}): ` +
+          `${github.failures.map((failure) => failure.error).join("; ")}\n`,
+        );
+      } else {
+        consecutiveGitHubFailures = 0;
+      }
     } finally {
       store.close();
     }
-    await delay(interval);
+    await delay(nextDelay);
   } while (true);
 }
 
@@ -784,6 +810,8 @@ Commands:
   turn-events MESSAGE_ID --reported-by NAME --attempt NUMBER --stream-id ID
     [--retry-after-ms NUMBER] [--history-incomplete] < codex-events.jsonl
   run --owner LOGIN --project NUMBER [--checkout PATH] [--once]
+    [--interval-ms NUMBER] [--github-backoff-ms NUMBER]
+    [--github-max-backoff-ms NUMBER]
   run [--once] [--interval-ms NUMBER] [legacy runner options]
 
 Runner options:

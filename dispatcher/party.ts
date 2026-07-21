@@ -317,22 +317,22 @@ async function runGoalLoop(
             lastError: "stale runtime start recovered by dispatcher",
           });
         }
-        if (["stopped", "human_needed"].includes(context.state)) {
+        if (context.state === "stopped") {
           if (health.appServerAlive || health.gatewayAlive) {
-            const desiredState = context.state;
             context = await stopGoalRuntime(context.id, databasePath);
-            if (desiredState === "human_needed") {
-              context = store.updateRuntime(context.id, { state: "human_needed" });
-            }
           }
           continue;
         }
         if (
-          ["running", "sleeping", "error"].includes(context.state) &&
+          ["running", "sleeping", "human_needed", "error"].includes(context.state) &&
           (!health.appServerAlive || !health.gatewayAlive)
         ) {
+          const humanGate = context.state === "human_needed";
           try {
             context = await startGoalRuntime(context.id, { databasePath });
+            if (humanGate) {
+              context = store.updateRuntime(context.id, { state: "human_needed" });
+            }
           } catch (error) {
             deliveries.push({
               goal: `${context.repository}#${context.issueNumber}`,
@@ -343,6 +343,9 @@ async function runGoalLoop(
             });
             continue;
           }
+        }
+        if (context.state === "human_needed") {
+          continue;
         }
         store.recoverInterruptedEvents(context.id);
         if (booleanOption(parsed, "once")) {

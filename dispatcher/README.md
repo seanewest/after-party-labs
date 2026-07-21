@@ -62,6 +62,8 @@ Busy contexts retain events in source order. Idle or sleeping contexts resume au
 Waiting for a check, review, deployment, or other machine-observable event ends the current model
 turn; durable state wakes the same context later. Automated delivery must coordinate with the
 browser terminal so that only one Codex client owns the conversation at a time.
+Human Needed suppresses automated event delivery but keeps the goal runtime and browser route
+available for the owning human to inspect, chat, steer, paste an image, and record a decision.
 
 ## Local-only browser boundary
 

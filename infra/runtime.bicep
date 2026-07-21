@@ -86,11 +86,7 @@ resource containerEnvironment 'Microsoft.App/managedEnvironments@2025-01-01' = {
   name: environmentName
   location: location
   tags: union(tags, { 'after-party-component': 'container-environment' })
-  properties: {
-    appLogsConfiguration: {
-      destination: 'none'
-    }
-  }
+  properties: {}
 }
 
 resource api 'Microsoft.App/containerApps@2025-01-01' = {

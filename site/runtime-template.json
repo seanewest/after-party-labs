@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.45.15.27210",
-      "templateHash": "11150415697938089118"
+      "templateHash": "2848959012156365757"
     }
   },
   "parameters": {
@@ -142,7 +142,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.45.15.27210",
-              "templateHash": "8314741032827233763"
+              "templateHash": "14492169599089478304"
             }
           },
           "parameters": {
@@ -260,11 +260,7 @@
               "name": "[variables('environmentName')]",
               "location": "[parameters('location')]",
               "tags": "[union(variables('tags'), createObject('after-party-component', 'container-environment'))]",
-              "properties": {
-                "appLogsConfiguration": {
-                  "destination": "none"
-                }
-              }
+              "properties": {}
             },
             {
               "type": "Microsoft.App/containerApps",

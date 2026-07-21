@@ -369,6 +369,7 @@ test('the Bicep runtime is minimal, passwordless, stateful, and versioned', asyn
   assert.match(runtime, /apiImage/);
   assert.match(runtime, /unauthenticatedClientAction: 'Return401'/);
   assert.match(runtime, /allowedApplications/);
+  assert.doesNotMatch(runtime, /appLogsConfiguration|destination:\s*'none'/);
   assert.doesNotMatch(runtime, /federatedIdentityCredentials/);
   assert.doesNotMatch(runtime, /token\.actions\.githubusercontent\.com/);
   assert.match(main, /8e3af657-a8ff-443c-a75c-2fe8c4bcb635/);

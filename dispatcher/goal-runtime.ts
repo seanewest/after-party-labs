@@ -4,6 +4,7 @@ import { connect, createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { CodexAppServerClient } from "./app-server-client.ts";
 import { GoalContextStore, type GoalContextRecord } from "./goal-context.ts";
 
 export interface GoalRuntimeStartOptions {
@@ -25,10 +26,8 @@ export async function startGoalRuntime(
   const store = new GoalContextStore(options.databasePath);
   try {
     const context = store.require(contextId);
-    if (
-      isExpectedProcess(context.gatewayPid, ["goal-gateway", context.id]) &&
-      isExpectedProcess(context.appServerPid, ["codex", "app-server", context.appEndpoint ?? ""])
-    ) {
+    const existingHealth = await functionalHealth(context);
+    if (existingHealth.gatewayAlive && existingHealth.appServerAlive) {
       return context;
     }
     if (!store.tryBeginRuntimeStart(context.id, context.generation)) {
@@ -139,24 +138,52 @@ export async function stopGoalRuntime(
   }
 }
 
-export function inspectGoalRuntime(
+export async function inspectGoalRuntime(
   contextId: string,
   databasePath: string,
-): { context: GoalContextRecord; appServerAlive: boolean; gatewayAlive: boolean } {
+): Promise<{ context: GoalContextRecord; appServerAlive: boolean; gatewayAlive: boolean }> {
   const store = new GoalContextStore(databasePath);
   try {
     const context = store.require(contextId);
-    return {
-      context,
-      appServerAlive: isExpectedProcess(
-        context.appServerPid,
-        ["codex", "app-server", context.appEndpoint ?? ""],
-      ),
-      gatewayAlive: isExpectedProcess(context.gatewayPid, ["goal-gateway", context.id]),
-    };
+    return { context, ...await functionalHealth(context) };
   } finally {
     store.close();
   }
+}
+
+async function functionalHealth(context: GoalContextRecord): Promise<{
+  appServerAlive: boolean;
+  gatewayAlive: boolean;
+}> {
+  let appServerAlive = isExpectedProcess(
+    context.appServerPid,
+    ["codex", "app-server", context.appEndpoint ?? ""],
+  );
+  let gatewayAlive = isExpectedProcess(context.gatewayPid, ["goal-gateway", context.id]);
+  if (appServerAlive && context.appEndpoint) {
+    try {
+      const probe = await CodexAppServerClient.connect(context.appEndpoint, {
+        connectTimeoutMs: 1_000,
+        requestTimeoutMs: 1_000,
+        clientName: "after-party-health-probe",
+      });
+      probe.close();
+    } catch {
+      appServerAlive = false;
+    }
+  }
+  if (gatewayAlive && context.contextUrl) {
+    try {
+      const response = await fetch(`${context.contextUrl}/status`, {
+        signal: AbortSignal.timeout(1_000),
+      });
+      const status = await response.json() as Record<string, unknown>;
+      gatewayAlive = response.ok && status.contextId === context.id && status.connected === true;
+    } catch {
+      gatewayAlive = false;
+    }
+  }
+  return { appServerAlive, gatewayAlive };
 }
 
 export function runtimeLogs(

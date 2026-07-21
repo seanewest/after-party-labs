@@ -158,8 +158,8 @@ export class GhProjectGoalSource implements GoalGitHubSource {
             String(parsed.number),
             "--repo",
             parsed.repository,
-            "--json",
-            "title,url,state,updatedAt,mergedAt,headRefOid,statusCheckRollup",
+          "--json",
+          "url,state,updatedAt,mergedAt,headRefOid,statusCheckRollup",
           ]),
         ),
         "goal pull request snapshot",
@@ -227,6 +227,9 @@ export class GhProjectGoalSource implements GoalGitHubSource {
     return pages.flatMap((page) => array(page, `${kind} page`)).flatMap((value) => {
       try {
         const payload = object(value, kind);
+        if (isInteractiveEvent(kind) && !isTrustedAssociation(payload.author_association)) {
+          return [];
+        }
         const id = String(payload.id ?? payload.node_id ?? "").trim();
         if (!id) return [];
         const canonical = stableJson(payload);
@@ -360,6 +363,16 @@ export class GhProjectGoalSource implements GoalGitHubSource {
       "--field-id", fieldId, "--text", value,
     ]);
   }
+}
+
+const TRUSTED_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
+
+function isInteractiveEvent(kind: string): boolean {
+  return kind.includes("comment") || kind === "pull_request_review";
+}
+
+function isTrustedAssociation(value: unknown): boolean {
+  return typeof value === "string" && TRUSTED_ASSOCIATIONS.has(value.toUpperCase());
 }
 
 interface Field { id: string; name: string }

@@ -292,7 +292,10 @@ async function runGoalLoop(
         turnTimeoutMs: integerOption(parsed, "turn-timeout-ms"),
       });
       for (let context of store.list()) {
-        const health = inspectGoalRuntime(context.id, databasePath);
+        if (existsSync(context.worktreePath)) {
+          context = store.updateRuntime(context.id, checkpoint(context.worktreePath));
+        }
+        const health = await inspectGoalRuntime(context.id, databasePath);
         if (
           context.state === "starting" &&
           (!health.appServerAlive || !health.gatewayAlive) &&
@@ -425,6 +428,7 @@ async function provisionGoal(
     worktreePath: worktree,
     branch,
   });
+  store.updateRuntime(context.id, checkpoint(worktree));
   return startGoalRuntime(context.id, { databasePath });
 }
 
@@ -451,7 +455,7 @@ async function runGoalCommand(
         ...reference,
         worktreePath: worktree,
         branch,
-        threadId: option(parsed, "thread-id") ?? process.env.CODEX_THREAD_ID ?? null,
+        threadId: option(parsed, "thread-id") ?? null,
       });
       store.updateRuntime(context.id, checkpoint(worktree));
       store.close();
@@ -467,7 +471,7 @@ async function runGoalCommand(
     const context = store.requireByGoal(reference);
     if (action === "status") {
       process.stdout.write(
-        `${JSON.stringify(inspectGoalRuntime(context.id, databasePath), null, 2)}\n`,
+        `${JSON.stringify(await inspectGoalRuntime(context.id, databasePath), null, 2)}\n`,
       );
       return 0;
     }
@@ -516,7 +520,7 @@ async function runGoalCommand(
     if (action === "inspect") {
       process.stdout.write(
         `${JSON.stringify({
-          ...inspectGoalRuntime(context.id, databasePath),
+          ...await inspectGoalRuntime(context.id, databasePath),
           events: store.listEvents(context.id),
         }, null, 2)}\n`,
       );

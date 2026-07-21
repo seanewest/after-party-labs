@@ -81,6 +81,7 @@ export interface GoalEvent {
   sourceKind: string;
   sourceVersion: string;
   sourceTime: number;
+  deliveryClientId: string;
   payload: JsonValue;
   state: GoalEventState;
   consumer: string | null;
@@ -137,6 +138,7 @@ const schema = `
     source_kind TEXT NOT NULL,
     source_version TEXT NOT NULL,
     source_time INTEGER NOT NULL,
+    delivery_client_id TEXT,
     payload_json TEXT NOT NULL,
     state TEXT NOT NULL CHECK (state IN (
       'pending', 'delivering', 'consumed', 'failed'
@@ -397,14 +399,14 @@ export class GoalContextStore {
       this.#database.prepare(`
           INSERT INTO goal_events (
             id, context_id, sequence, source_id, source_kind, source_version,
-            source_time, payload_json, state, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+            source_time, delivery_client_id, payload_json, state, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
         `).run(
           id, context.id, sequence, sourceId,
           nonEmpty(input.sourceKind, "goal event source kind"),
           nonEmpty(input.sourceVersion, "goal event source version"),
           nonNegativeInteger(input.sourceTime, "goal event source time"),
-          JSON.stringify(input.payload), now, now,
+          sourceId, JSON.stringify(input.payload), now, now,
         );
       this.#database.exec("COMMIT");
       return this.requireEvent(id);
@@ -499,6 +501,45 @@ export class GoalContextStore {
     return this.#finishEvent(id, consumer, "consumed", outcome);
   }
 
+  completeEventAndRelease(id: string, consumer: string, outcome: string): GoalEvent {
+    const event = this.requireEvent(id);
+    const owner = nonEmpty(consumer, "goal event consumer");
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      const result = this.#database.prepare(`
+        UPDATE goal_events SET state = 'consumed', outcome = ?, updated_at = ?
+        WHERE id = ? AND state = 'delivering' AND consumer = ?
+      `).run(nonEmpty(outcome, "goal event outcome"), this.#now(), event.id, owner);
+      if (result.changes !== 1) {
+        throw new GoalContextError(`Goal event ${id} is not delivering for consumer ${owner}.`);
+      }
+      this.#database.prepare(`
+        UPDATE goal_contexts SET pending_operation = NULL, updated_at = ?
+        WHERE id = ? AND (pending_operation = ? OR pending_operation LIKE 'turn:%')
+      `).run(this.#now(), event.contextId, `event-submit:${event.id}`);
+      this.#database.exec("COMMIT");
+      return this.requireEvent(event.id);
+    } catch (error) {
+      this.#database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  setEventDeliveryClientId(id: string, consumer: string, clientId: string): GoalEvent {
+    const event = this.requireEvent(id);
+    const result = this.#database.prepare(`
+      UPDATE goal_events SET delivery_client_id = ?, updated_at = ?
+      WHERE id = ? AND state = 'delivering' AND consumer = ?
+    `).run(
+      nonEmpty(clientId, "delivery client message ID"), this.#now(), event.id,
+      nonEmpty(consumer, "goal event consumer"),
+    );
+    if (result.changes !== 1) {
+      throw new GoalContextError(`Goal event ${id} delivery ownership changed.`);
+    }
+    return this.requireEvent(event.id);
+  }
+
   failEvent(id: string, consumer: string, outcome: string): GoalEvent {
     return this.#finishEvent(id, consumer, "failed", outcome);
   }
@@ -529,13 +570,23 @@ export class GoalContextStore {
         `Goal event ${id} is not delivering for consumer ${owner}.`,
       );
     }
-    this.#database
-      .prepare(`
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      this.#database.prepare(`
         UPDATE goal_events SET state = 'pending', consumer = NULL,
           outcome = ?, updated_at = ? WHERE id = ?
       `)
       .run(nonEmpty(outcome, "reconciliation outcome"), this.#now(), event.id);
-    return this.requireEvent(event.id);
+      this.#database.prepare(`
+        UPDATE goal_contexts SET pending_operation = NULL, updated_at = ?
+        WHERE id = ? AND (pending_operation = ? OR pending_operation LIKE 'turn:%')
+      `).run(this.#now(), event.contextId, `event-submit:${event.id}`);
+      this.#database.exec("COMMIT");
+      return this.requireEvent(event.id);
+    } catch (error) {
+      this.#database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   listEvents(contextId: string, state?: GoalEventState): GoalEvent[] {
@@ -679,6 +730,8 @@ function mapEvent(row: Row): GoalEvent {
     sourceKind: stringValue(row.source_kind, "goal event source kind"),
     sourceVersion: stringValue(row.source_version, "goal event source version"),
     sourceTime: numberValue(row.source_time, "goal event source time"),
+    deliveryClientId: nullableString(row.delivery_client_id) ??
+      stringValue(row.source_id, "goal event source ID"),
     payload: JSON.parse(stringValue(row.payload_json, "goal event payload")) as JsonValue,
     state: stringValue(row.state, "goal event state") as GoalEventState,
     consumer: nullableString(row.consumer),
@@ -767,6 +820,13 @@ function ensureGoalContextMigrations(database: DatabaseSync): void {
     database.exec(
       "ALTER TABLE goal_contexts ADD COLUMN thread_has_activity INTEGER NOT NULL DEFAULT 0 CHECK (thread_has_activity IN (0, 1))",
     );
+  }
+  const eventColumns = database.prepare("PRAGMA table_info(goal_events)").all() as Array<{
+    name: string;
+  }>;
+  if (!eventColumns.some((column) => column.name === "delivery_client_id")) {
+    database.exec("ALTER TABLE goal_events ADD COLUMN delivery_client_id TEXT");
+    database.exec("UPDATE goal_events SET delivery_client_id = source_id WHERE delivery_client_id IS NULL");
   }
 }
 

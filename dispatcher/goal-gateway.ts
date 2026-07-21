@@ -41,6 +41,7 @@ export class GoalGateway {
   #listeners = new Set<ServerResponse>();
   #turnUploads = new Map<string, string[]>();
   #terminalTurns = new Set<string>();
+  #streamedItems = new Set<string>();
   #followups: BrowserInput[] = [];
   #uploadDirectoryReady = false;
   #fatalResolve!: (error: Error) => void;
@@ -74,7 +75,7 @@ export class GoalGateway {
       try {
         thread = await this.#client.resumeThread(context.threadId, context.worktreePath);
       } catch (error) {
-        if (context.threadHasActivity) {
+        if (context.threadHasActivity || !isMissingEmptyThreadError(error)) {
           throw error;
         }
         // Codex does not persist a newly-created rollout until it has activity.
@@ -148,7 +149,7 @@ export class GoalGateway {
         }));
       }
     }
-    const rendered = renderNotification(notification);
+    const rendered = renderNotification(notification, this.#streamedItems);
     if (!rendered) return;
     this.#history.push(rendered);
     if (this.#history.length > MAX_HISTORY) {
@@ -261,6 +262,7 @@ export class GoalGateway {
       throw new Error("The goal context became busy; retry as a steering message.");
     }
     try {
+      this.#store.updateRuntime(this.#options.contextId, { threadHasActivity: true });
       const turn = await this.#client.startTurn(
         this.#threadId,
         values,
@@ -380,9 +382,11 @@ document.querySelector('#form').addEventListener('submit',async e=>{e.preventDef
 
 function renderNotification(
   notification: CodexAppServerNotification,
+  streamedItems: Set<string>,
 ): CodexAppServerNotification | null {
   const params = notification.params ?? {};
   if (notification.method === "item/agentMessage/delta" && typeof params.delta === "string") {
+    if (typeof params.itemId === "string") streamedItems.add(params.itemId);
     return { method: "conversation/delta", params: { text: params.delta } };
   }
   if (notification.method === "item/commandExecution/outputDelta" && typeof params.delta === "string") {
@@ -391,6 +395,7 @@ function renderNotification(
   if (notification.method === "item/completed") {
     const item = objectValue(params.item);
     if (item?.type === "agentMessage" && typeof item.text === "string") {
+      if (typeof item.id === "string" && streamedItems.delete(item.id)) return null;
       return { method: "conversation/message", params: { role: "assistant", text: item.text } };
     }
     if (item?.type === "commandExecution") {
@@ -535,4 +540,9 @@ function activeTurnFromSnapshot(snapshot: Record<string, unknown>): string | nul
 
 function snapshotHasActivity(snapshot: Record<string, unknown>): boolean {
   return Array.isArray(snapshot.turns) && snapshot.turns.length > 0;
+}
+
+function isMissingEmptyThreadError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /thread|rollout/i.test(message) && /not found|does not exist|missing/i.test(message);
 }

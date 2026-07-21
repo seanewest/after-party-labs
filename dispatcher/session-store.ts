@@ -92,6 +92,7 @@ export class WorkerSessionStore {
     ensureDatabaseDirectory(databasePath);
     this.databasePath = databasePath;
     this.#database = new DatabaseSync(databasePath);
+    this.#database.exec("PRAGMA busy_timeout = 5000;");
     this.#database.exec(schema);
     this.#now = options.now ?? Date.now;
   }

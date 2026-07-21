@@ -1,19 +1,17 @@
 # Persistent goal-context dispatcher
 
-This document defines the target contract being implemented by Goal #34. The checked-in dispatcher
-still exposes the earlier named-worker queue, runner, hooks, and GitHub poller; it does **not** yet
-implement the `party goal` commands or browser-visible goal context described below. Those old
-commands are compatibility inputs, not an active ownership or PR-handoff workflow.
-
-The completed dispatcher turns each actionable GitHub goal into one durable, browser-visible Codex
+The dispatcher turns each actionable GitHub goal into one durable, browser-visible Codex
 context. The context owns its goal through implementation, testing, temporary-subagent review,
 fixes, merge, deployment, and acceptance proof. GitHub is authoritative for durable intent and
 evidence; local state provides execution, recovery, and the live conversation surface.
 
+The older named-worker queue and commands remain temporarily for database compatibility and
+comparison tests. They do not assign goals or participate in the goal-context path.
+
 ## Interaction contract
 
-In the target behavior, an eligible goal in **Ready** is assigned exactly one stable Goal Context
-ID. The dispatcher records that ID and a clickable loopback Context URL on the card, starts the
+An eligible goal in **Ready** is assigned exactly one stable Goal Context ID. The dispatcher records
+that ID and a clickable loopback Context URL on the card, starts the
 context, and moves the goal to **In Progress**. The URL opens the same conversation and execution
 surface used for automated turns. It shows a running turn incrementally and supports ordinary
 prompts, steering, image paste, detach, and reattach.
@@ -27,6 +25,11 @@ The board flow is **Backlog**, **Ready**, **In Progress**, **Human Needed**, and
 check waits, event sleeps, merge, deployment, and proof remain In Progress. Human Needed is reserved
 for a real decision, unavailable external authority, an unauthorized consequential action, or
 subjective acceptance.
+
+On first reconciliation the dispatcher creates `Goal Status`, `Goal Context ID`, and `Context URL`
+project fields when they are absent. `Goal Status` contains only those five states. Existing legacy
+fields may remain as historical data, but dispatch reads Goal Status first and never reads persona
+or Story/Task fields.
 
 ## One owner, bounded subagents
 
@@ -93,18 +96,19 @@ Overlapping poll or runner processes serialize claims in SQLite transactions.
 
 ## Operator interface
 
-The goal-context implementation must expose these operations without requiring a permanent worker
-terminal:
+The operator interface does not require a permanent worker terminal:
 
 ```text
-party goal start OWNER/REPO#NUMBER
+party goal start OWNER/REPO#NUMBER [--worktree PATH] [--thread-id ID]
 party goal stop OWNER/REPO#NUMBER
 party goal status [OWNER/REPO#NUMBER]
 party goal recover OWNER/REPO#NUMBER
 party goal open OWNER/REPO#NUMBER
 party goal logs OWNER/REPO#NUMBER
 party goal inspect OWNER/REPO#NUMBER
-party run [--once]
+party run --owner OWNER --project NUMBER [--checkout PATH] [--once]
+party service install --owner OWNER --project NUMBER [--checkout PATH]
+party service start|stop|restart|status|logs|uninstall
 ```
 
 `start` is idempotent and returns the existing context when one is already assigned. `stop` ends
@@ -113,16 +117,11 @@ same context. `open` resolves or launches the safe loopback browser route. `stat
 `inspect` includes pending events and recovery state; `logs` streams sanitized local diagnostics.
 `run --once` performs one bounded reconciliation and event-delivery pass for schedulers and tests.
 
-These commands define the target interface for the migration. Until the implementation lands, the
-existing `party` queue, hook, and GitHub polling commands are compatibility plumbing and must not be
-used to assign goals by permanent worker name.
-
-For the first usable cutover, the maintainer may explicitly start one local `party run` process or
-scheduler. That runner observes Ready goals and creates their routes; it is not a separate goal
-owner, and no per-goal worker terminal is required. `party run --once` performs the same bounded
-reconciliation for tests or an external scheduler. Completing Goal #34 requires installing the
-runner as a restartable local user service so Ready cards and later events resume contexts without
-that manual bootstrap terminal.
+For a bounded first cutover, the maintainer may explicitly start one local `party run` process.
+That runner observes Ready goals and creates their routes; it is not a separate goal owner, and no
+per-goal worker terminal is required. `--once` performs one reconciliation for tests or an external
+scheduler. `party service install` writes only the recognized After Party user unit, enables it,
+and restarts it after failure. Installation and removal refuse to overwrite unrelated units.
 
 ## Lifecycle trust boundary
 

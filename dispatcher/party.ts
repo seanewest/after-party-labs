@@ -1,10 +1,29 @@
 #!/usr/bin/env node
 
 import process from "node:process";
-import { spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 import { validateLocalAppServerEndpoint } from "./app-server-client.ts";
+import {
+  GoalContextStore,
+  parseGoalReference,
+  type GoalContextRecord,
+} from "./goal-context.ts";
+import { GoalEventDelivery } from "./goal-event-delivery.ts";
+import { GoalGateway } from "./goal-gateway.ts";
+import {
+  GhProjectGoalSource,
+  GoalGitHubPoller,
+  type BoardGoal,
+} from "./goal-github.ts";
+import {
+  inspectGoalRuntime,
+  runtimeLogs,
+  startGoalRuntime,
+  stopGoalRuntime,
+} from "./goal-runtime.ts";
 import {
   inspectHookInstallation,
   installHooks,
@@ -14,6 +33,13 @@ import { defaultDispatcherDatabasePath } from "./paths.ts";
 import { DispatcherQueue } from "./queue.ts";
 import { parseAgentName } from "./registry.ts";
 import { WorkerSessionStore } from "./session-store.ts";
+import {
+  controlDispatcherService,
+  dispatcherServiceLogs,
+  dispatcherServiceStatus,
+  installDispatcherService,
+  uninstallDispatcherService,
+} from "./service.ts";
 import { SharedWorkerDeliveryPrototype } from "./shared-worker-prototype.ts";
 import { TmuxWorkerTerminal } from "./tmux-runner.ts";
 import {
@@ -42,6 +68,19 @@ export async function runParty(argv = process.argv.slice(2)): Promise<number> {
   }
 
   const databasePath = option(parsed, "database") ?? defaultDispatcherDatabasePath();
+  if (command === "goal") {
+    return runGoalCommand(positionals, parsed, databasePath);
+  }
+  if (command === "goal-gateway") {
+    return runGoalGateway(positionals, parsed, databasePath);
+  }
+  if (command === "service") {
+    return runServiceCommand(positionals, parsed, databasePath);
+  }
+  if (command === "run" && option(parsed, "owner") && option(parsed, "project")) {
+    return runGoalLoop(parsed, databasePath);
+  }
+
   const queue = new DispatcherQueue(databasePath);
   const sessions = new WorkerSessionStore(databasePath);
   const terminal = new TmuxWorkerTerminal({ dispatcherDatabasePath: databasePath });
@@ -187,6 +226,405 @@ export async function runParty(argv = process.argv.slice(2)): Promise<number> {
   }
 }
 
+function runServiceCommand(
+  positionals: string[],
+  parsed: ParsedArguments,
+  databasePath: string,
+): number {
+  const action = requiredPositional(positionals, 0, "service action");
+  if (action === "install") {
+    const result = installDispatcherService({
+      owner: requiredOption(parsed, "owner"),
+      projectNumber: requiredIntegerOption(parsed, "project"),
+      checkout: option(parsed, "checkout") ?? process.cwd(),
+      databasePath,
+    });
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return result.active === "active" ? 0 : 1;
+  }
+  if (action === "uninstall") {
+    process.stdout.write(`${JSON.stringify(uninstallDispatcherService(), null, 2)}\n`);
+    return 0;
+  }
+  if (action === "status") {
+    const result = dispatcherServiceStatus();
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return result.active === "active" ? 0 : 1;
+  }
+  if (action === "logs") {
+    process.stdout.write(
+      `${dispatcherServiceLogs(integerOption(parsed, "lines") ?? 100)}\n`,
+    );
+    return 0;
+  }
+  if (["start", "stop", "restart"].includes(action)) {
+    const result = controlDispatcherService(
+      action as "start" | "stop" | "restart",
+    );
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return action === "stop" || result.active === "active" ? 0 : 1;
+  }
+  throw new Error(`Unknown service action "${action}".`);
+}
+
+async function runGoalLoop(
+  parsed: ParsedArguments,
+  databasePath: string,
+): Promise<number> {
+  const owner = requiredOption(parsed, "owner");
+  const projectNumber = requiredIntegerOption(parsed, "project");
+  const checkout = option(parsed, "checkout") ?? process.cwd();
+  const interval = integerOption(parsed, "interval-ms") ?? 5_000;
+  if (interval < 1) {
+    throw new Error("--interval-ms must be positive.");
+  }
+  do {
+    const store = new GoalContextStore(databasePath);
+    try {
+      const source = new GhProjectGoalSource({ owner, projectNumber });
+      const poller = new GoalGitHubPoller(source, store, {
+        provision: (goal) => provisionGoal(goal, store, databasePath, checkout),
+      });
+      const github = await poller.poll();
+      const deliveries: Array<{ goal: string; result: Record<string, unknown> }> = [];
+      const delivery = new GoalEventDelivery(store, {
+        consumer: option(parsed, "consumer"),
+        turnTimeoutMs: integerOption(parsed, "turn-timeout-ms"),
+      });
+      for (let context of store.list()) {
+        const health = inspectGoalRuntime(context.id, databasePath);
+        if (
+          context.state === "starting" &&
+          (!health.appServerAlive || !health.gatewayAlive) &&
+          Date.now() - context.updatedAt > 30_000
+        ) {
+          context = store.updateRuntime(context.id, {
+            state: "error",
+            appServerPid: null,
+            gatewayPid: null,
+            lastError: "stale runtime start recovered by dispatcher",
+          });
+        }
+        if (["stopped", "human_needed"].includes(context.state)) {
+          if (health.appServerAlive || health.gatewayAlive) {
+            const desiredState = context.state;
+            context = await stopGoalRuntime(context.id, databasePath);
+            if (desiredState === "human_needed") {
+              context = store.updateRuntime(context.id, { state: "human_needed" });
+            }
+          }
+          continue;
+        }
+        if (
+          ["running", "sleeping", "error"].includes(context.state) &&
+          (!health.appServerAlive || !health.gatewayAlive)
+        ) {
+          try {
+            context = await startGoalRuntime(context.id, { databasePath });
+          } catch (error) {
+            deliveries.push({
+              goal: `${context.repository}#${context.issueNumber}`,
+              result: {
+                outcome: "failed" as const,
+                error: error instanceof Error ? error.message : String(error),
+              },
+            });
+            continue;
+          }
+        }
+        store.recoverInterruptedEvents(context.id);
+        if (booleanOption(parsed, "once")) {
+          deliveries.push({
+            goal: `${context.repository}#${context.issueNumber}`,
+            result: await delivery.deliverOnce(context.id),
+          });
+        } else {
+          void deliverInOwnStore(databasePath, context.id, {
+            consumer: option(parsed, "consumer"),
+            turnTimeoutMs: integerOption(parsed, "turn-timeout-ms"),
+          });
+        }
+      }
+      const result = { github, deliveries };
+      if (booleanOption(parsed, "once")) {
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+        return github.failures.length > 0 || deliveries.some(
+          (value) => value.result.outcome === "failed",
+        ) ? 1 : 0;
+      }
+    } finally {
+      store.close();
+    }
+    await delay(interval);
+  } while (true);
+}
+
+async function deliverInOwnStore(
+  databasePath: string,
+  contextId: string,
+  options: { consumer?: string; turnTimeoutMs?: number },
+): Promise<void> {
+  const store = new GoalContextStore(databasePath);
+  try {
+    await new GoalEventDelivery(store, options).deliverOnce(contextId);
+  } catch (error) {
+    process.stderr.write(
+      `Goal event delivery ${contextId} failed: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+  } finally {
+    store.close();
+  }
+}
+
+async function provisionGoal(
+  goal: BoardGoal,
+  store: GoalContextStore,
+  databasePath: string,
+  checkout: string,
+): Promise<GoalContextRecord> {
+  const localRepository = git(checkout, ["config", "--get", "remote.origin.url"]);
+  if (!localRepository.toLowerCase().includes(goal.repository.toLowerCase())) {
+    throw new Error(
+      `Goal ${goal.repository} is not available from checkout ${checkout}.`,
+    );
+  }
+  const worktree = join(
+    dirname(databasePath),
+    "worktrees",
+    goal.repository.replaceAll("/", "-"),
+    String(goal.issueNumber),
+  );
+  const branch = `agent/goal-${goal.issueNumber}-context`;
+  if (!existsSync(worktree)) {
+    mkdirSync(dirname(worktree), { recursive: true, mode: 0o700 });
+    let branchExists = true;
+    try {
+      execFileSync(
+        "git",
+        ["-C", checkout, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`],
+        { stdio: "ignore" },
+      );
+    } catch {
+      branchExists = false;
+    }
+    if (branchExists) {
+      execFileSync("git", ["-C", checkout, "worktree", "add", worktree, branch], {
+        stdio: "pipe",
+      });
+    } else {
+      execFileSync(
+        "git",
+        ["-C", checkout, "worktree", "add", "-b", branch, worktree, "origin/main"],
+        { stdio: "pipe" },
+      );
+    }
+  }
+  const context = store.createOrGet({
+    repository: goal.repository,
+    issueNumber: goal.issueNumber,
+    worktreePath: worktree,
+    branch,
+  });
+  return startGoalRuntime(context.id, { databasePath });
+}
+
+async function runGoalCommand(
+  positionals: string[],
+  parsed: ParsedArguments,
+  databasePath: string,
+): Promise<number> {
+  const action = requiredPositional(positionals, 0, "goal action");
+  const referenceValue = positionals[1];
+  const store = new GoalContextStore(databasePath);
+  try {
+    if (action === "status" && !referenceValue) {
+      process.stdout.write(`${JSON.stringify(store.list().map(runtimeSummary), null, 2)}\n`);
+      return 0;
+    }
+    const reference = parseGoalReference(
+      requiredPositional(positionals, 1, "goal reference"),
+    );
+    if (action === "start") {
+      const worktree = option(parsed, "worktree") ?? process.cwd();
+      const branch = option(parsed, "branch") ?? git(worktree, ["branch", "--show-current"]);
+      const context = store.createOrGet({
+        ...reference,
+        worktreePath: worktree,
+        branch,
+        threadId: option(parsed, "thread-id") ?? process.env.CODEX_THREAD_ID ?? null,
+      });
+      store.updateRuntime(context.id, checkpoint(worktree));
+      store.close();
+      const running = await startGoalRuntime(context.id, {
+        databasePath,
+        appPort: integerOption(parsed, "app-port"),
+        gatewayPort: integerOption(parsed, "gateway-port"),
+        startupTimeoutMs: integerOption(parsed, "startup-timeout-ms"),
+      });
+      process.stdout.write(`${JSON.stringify(runtimeSummary(running), null, 2)}\n`);
+      return 0;
+    }
+    const context = store.requireByGoal(reference);
+    if (action === "status") {
+      process.stdout.write(
+        `${JSON.stringify(inspectGoalRuntime(context.id, databasePath), null, 2)}\n`,
+      );
+      return 0;
+    }
+    if (action === "stop") {
+      store.updateRuntime(context.id, checkpoint(context.worktreePath));
+      store.close();
+      process.stdout.write(
+        `${JSON.stringify(runtimeSummary(await stopGoalRuntime(context.id, databasePath)), null, 2)}\n`,
+      );
+      return 0;
+    }
+    if (action === "recover") {
+      if (existsSync(context.worktreePath)) {
+        const branch = git(context.worktreePath, ["branch", "--show-current"]);
+        if (branch !== context.branch) {
+          throw new Error(
+            `Goal worktree branch changed from ${context.branch} to ${branch}; human reconciliation is required.`,
+          );
+        }
+        store.updateRuntime(context.id, checkpoint(context.worktreePath));
+      } else {
+        reconstructGoalWorktree(context, option(parsed, "checkout") ?? process.cwd());
+      }
+      store.close();
+      try {
+        await stopGoalRuntime(context.id, databasePath);
+      } catch {
+        // A dead or already-reconciled process is expected during recovery.
+      }
+      const recovered = await startGoalRuntime(context.id, {
+        databasePath,
+        appPort: integerOption(parsed, "app-port"),
+        gatewayPort: integerOption(parsed, "gateway-port"),
+        startupTimeoutMs: integerOption(parsed, "startup-timeout-ms"),
+      });
+      process.stdout.write(`${JSON.stringify(runtimeSummary(recovered), null, 2)}\n`);
+      return 0;
+    }
+    if (action === "open") {
+      if (!context.contextUrl) {
+        throw new Error("Goal context has no browser URL; start or recover it first.");
+      }
+      process.stdout.write(`${context.contextUrl}\n`);
+      return 0;
+    }
+    if (action === "inspect") {
+      process.stdout.write(
+        `${JSON.stringify({
+          ...inspectGoalRuntime(context.id, databasePath),
+          events: store.listEvents(context.id),
+        }, null, 2)}\n`,
+      );
+      return 0;
+    }
+    if (action === "logs") {
+      const paths = runtimeLogs(databasePath, context.id);
+      for (const [name, path] of Object.entries(paths)) {
+        process.stdout.write(`== ${name}: ${path} ==\n`);
+        process.stdout.write(existsSync(path) ? readFileSync(path, "utf8") : "(no log)\n");
+      }
+      return 0;
+    }
+    throw new Error(`Unknown goal action "${action}".`);
+  } finally {
+    try {
+      store.close();
+    } catch {
+      // Some actions close before starting a detached runtime.
+    }
+  }
+}
+
+function reconstructGoalWorktree(context: GoalContextRecord, checkout: string): void {
+  if (context.worktreeDirty) {
+    throw new Error("Cannot reconstruct a missing goal worktree whose checkpoint was dirty.");
+  }
+  if (!context.lastHead) {
+    throw new Error("Cannot reconstruct a goal worktree without a durable HEAD checkpoint.");
+  }
+  const ref = git(checkout, ["rev-parse", context.branch]);
+  if (ref !== context.lastHead) {
+    throw new Error(
+      `Goal branch ${context.branch} moved from checkpoint ${context.lastHead} to ${ref}; human reconciliation is required.`,
+    );
+  }
+  mkdirSync(dirname(context.worktreePath), { recursive: true, mode: 0o700 });
+  execFileSync("git", ["-C", checkout, "worktree", "prune"], { stdio: "pipe" });
+  execFileSync(
+    "git",
+    ["-C", checkout, "worktree", "add", context.worktreePath, context.branch],
+    { stdio: "pipe" },
+  );
+  if (git(context.worktreePath, ["rev-parse", "HEAD"]) !== context.lastHead) {
+    throw new Error("Reconstructed goal worktree did not match its durable checkpoint.");
+  }
+}
+
+async function runGoalGateway(
+  positionals: string[],
+  parsed: ParsedArguments,
+  databasePath: string,
+): Promise<number> {
+  const contextId = requiredPositional(positionals, 0, "goal context ID");
+  const gateway = new GoalGateway({
+    databasePath,
+    contextId,
+    port: requiredIntegerOption(parsed, "port"),
+    uploadDirectory: join(dirname(databasePath), "uploads", contextId),
+  });
+  await gateway.start();
+  await Promise.race([gateway.fatal, new Promise<void>((resolve) => {
+    const stop = () => resolve();
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+  })]);
+  await gateway.stop();
+  return 0;
+}
+
+function checkpoint(worktree: string): {
+  lastHead: string | null;
+  worktreeDirty: boolean;
+} {
+  if (!existsSync(worktree)) {
+    return { lastHead: null, worktreeDirty: true };
+  }
+  return {
+    lastHead: git(worktree, ["rev-parse", "HEAD"]),
+    worktreeDirty: git(worktree, ["status", "--porcelain"]).length > 0,
+  };
+}
+
+function git(worktree: string, arguments_: string[]): string {
+  return execFileSync("git", ["-C", worktree, ...arguments_], {
+    encoding: "utf8",
+  }).trim();
+}
+
+function runtimeSummary(context: {
+  id: string;
+  repository: string;
+  issueNumber: number;
+  state: string;
+  threadId: string | null;
+  contextUrl: string | null;
+  generation: number;
+}): Record<string, unknown> {
+  return {
+    goal: `${context.repository}#${context.issueNumber}`,
+    contextId: context.id,
+    state: context.state,
+    threadId: context.threadId,
+    contextUrl: context.contextUrl,
+    generation: context.generation,
+  };
+}
+
 function runHookCommand(positionals: string[]): number {
   const action = requiredPositional(positionals, 0, "hooks action");
   const result =
@@ -327,6 +765,12 @@ const helpText = `Usage: party [options] <command>
 
 Commands:
   hooks install|status|uninstall
+  goal start OWNER/REPO#NUMBER [--worktree PATH] [--branch NAME]
+    [--thread-id ID] [--app-port NUMBER] [--gateway-port NUMBER]
+  goal stop|status|recover|open|logs|inspect OWNER/REPO#NUMBER
+  goal status
+  service install --owner LOGIN --project NUMBER [--checkout PATH]
+  service start|stop|restart|status|logs|uninstall
   configure NAME ABSOLUTE_WORKTREE_PATH
   agents
   shared-server NAME --listen ws://127.0.0.1:PORT
@@ -335,7 +779,8 @@ Commands:
   deliver [runner options]
   turn-events MESSAGE_ID --reported-by NAME --attempt NUMBER --stream-id ID
     [--retry-after-ms NUMBER] [--history-incomplete] < codex-events.jsonl
-  run [--once] [--interval-ms NUMBER] [runner options]
+  run --owner LOGIN --project NUMBER [--checkout PATH] [--once]
+  run [--once] [--interval-ms NUMBER] [legacy runner options]
 
 Runner options:
   --consumer ID

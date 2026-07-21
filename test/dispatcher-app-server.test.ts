@@ -114,6 +114,32 @@ test("app-server client fails closed on non-local experimental endpoints", async
   );
 });
 
+test("app-server client explicitly rejects unsupported server requests", async () => {
+  const socket = new FakeSocket();
+  const client = await CodexAppServerClient.connect("ws://127.0.0.1:4500", {
+    socketFactory: () => socket,
+  });
+  const notifications: CodexAppServerNotification[] = [];
+  client.onNotification((notification) => notifications.push(notification));
+  socket.message({
+    id: "approval-1",
+    method: "item/tool/requestUserInput",
+    params: { threadId: THREAD_ID },
+  });
+  await Promise.resolve();
+  const response = socket.sent.at(-1);
+  assert.equal(response?.id, "approval-1");
+  assert.match(
+    String((response?.error as Record<string, unknown>)?.message),
+    /does not handle/,
+  );
+  assert.equal(
+    notifications.at(-1)?.method,
+    "after-party/server-request-rejected",
+  );
+  client.close();
+});
+
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), "after-party-shared-worker-"));
   const worktree = join(directory, "worktree");

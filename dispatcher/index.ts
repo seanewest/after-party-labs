@@ -37,6 +37,49 @@ export {
   type GhCommandRunner,
 } from "./github-source.ts";
 export {
+  GOAL_CONTEXT_STATES,
+  GoalContextError,
+  GoalContextStore,
+  parseGoalReference,
+  type CreateGoalContextInput,
+  type EnqueueGoalEventInput,
+  type GoalContextRecord,
+  type GoalContextState,
+  type GoalContextStoreOptions,
+  type GoalEvent,
+  type GoalEventState,
+  type GoalReference,
+  type GoalRuntimeUpdate,
+} from "./goal-context.ts";
+export { GoalGateway, type GoalGatewayOptions } from "./goal-gateway.ts";
+export {
+  GoalEventDelivery,
+  formatGoalEvent,
+  type GoalEventDeliveryOptions,
+  type GoalEventDeliveryResult,
+} from "./goal-event-delivery.ts";
+export {
+  inspectGoalRuntime,
+  runtimeLogs,
+  startGoalRuntime,
+  stopGoalRuntime,
+  type GoalRuntimeStartOptions,
+} from "./goal-runtime.ts";
+export {
+  GOAL_BOARD_STATES,
+  GhProjectGoalSource,
+  GoalGitHubPoller,
+  runGh as runGoalGh,
+  type BoardGoal,
+  type GhProjectGoalSourceOptions,
+  type GoalBoardState,
+  type GoalCommandRunner,
+  type GoalGitHubPollerOptions,
+  type GoalGitHubPollResult,
+  type GoalGitHubSource,
+  type GoalSourceEvent,
+} from "./goal-github.ts";
+export {
   formatHandoff,
   HANDOFF_PREFIX,
   HANDOFF_VERSION,
@@ -103,6 +146,15 @@ export {
   type StartTurnInput,
   type WorkerSessionRecord,
 } from "./session-store.ts";
+export {
+  controlDispatcherService,
+  dispatcherServiceLogs,
+  dispatcherServiceStatus,
+  installDispatcherService,
+  uninstallDispatcherService,
+  type DispatcherServiceStatus,
+  type InstallDispatcherServiceOptions,
+} from "./service.ts";
 export {
   SharedWorkerDeliveryPrototype,
   type SharedWorkerPrototypeOptions,

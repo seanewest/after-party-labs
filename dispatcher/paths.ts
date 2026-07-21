@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 
 const applicationDirectory = "after-party";
 
@@ -31,5 +31,7 @@ export function ensureDatabaseDirectory(databasePath: string): void {
     return;
   }
 
-  mkdirSync(dirname(databasePath), { recursive: true });
+  const directory = dirname(databasePath);
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  chmodSync(directory, 0o700);
 }

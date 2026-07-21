@@ -10,6 +10,7 @@ export interface CodexAppServerNotification {
 
 export interface StartedThread {
   id: string;
+  snapshot: Record<string, unknown>;
 }
 
 export interface StartedTurn {
@@ -74,6 +75,7 @@ export class CodexAppServerClient {
   #nextRequestId = 0;
   #pending = new Map<number, PendingRequest>();
   #listeners = new Set<(notification: CodexAppServerNotification) => void>();
+  #closeListeners = new Set<(error: Error) => void>();
   #terminal = new Map<string, CodexAppServerNotification>();
   #terminalWaiters = new Map<string, TerminalWaiter>();
   #closed = false;
@@ -126,6 +128,10 @@ export class CodexAppServerClient {
         title: "After Party dispatcher prototype",
         version: nonEmpty(options.clientVersion ?? "0.1", "client version"),
       },
+      capabilities: {
+        experimentalApi: false,
+        requestAttestation: false,
+      },
     });
     client.#notify("initialized");
     return client;
@@ -138,16 +144,24 @@ export class CodexAppServerClient {
     return () => this.#listeners.delete(listener);
   }
 
+  onConnectionClosed(listener: (error: Error) => void): () => void {
+    this.#closeListeners.add(listener);
+    return () => this.#closeListeners.delete(listener);
+  }
+
   async startThread(cwd: string): Promise<StartedThread> {
     const result = requireObject(
       await this.#request("thread/start", {
         cwd: nonEmpty(cwd, "thread cwd"),
         ephemeral: false,
+        model: "gpt-5.6-sol",
+        approvalPolicy: "never",
+        sandbox: "danger-full-access",
       }),
       "thread/start result",
     );
     const thread = requireObject(result.thread, "started thread");
-    return { id: requireString(thread.id, "started thread ID") };
+    return { id: requireString(thread.id, "started thread ID"), snapshot: thread };
   }
 
   async resumeThread(threadId: string, cwd?: string): Promise<StartedThread> {
@@ -159,14 +173,23 @@ export class CodexAppServerClient {
       "thread/resume result",
     );
     const thread = requireObject(result.thread, "resumed thread");
-    return { id: requireString(thread.id, "resumed thread ID") };
+    return { id: requireString(thread.id, "resumed thread ID"), snapshot: thread };
   }
 
-  async startTurn(threadId: string, input: CodexUserInput[]): Promise<StartedTurn> {
+  async startTurn(
+    threadId: string,
+    input: CodexUserInput[],
+    clientUserMessageId?: string,
+  ): Promise<StartedTurn> {
     const result = requireObject(
       await this.#request("turn/start", {
         threadId: requireString(threadId, "thread ID"),
         input: requireInput(input),
+        model: "gpt-5.6-sol",
+        effort: "medium",
+        ...(clientUserMessageId
+          ? { clientUserMessageId: requireString(clientUserMessageId, "client message ID") }
+          : {}),
       }),
       "turn/start result",
     );
@@ -178,12 +201,16 @@ export class CodexAppServerClient {
     threadId: string,
     expectedTurnId: string,
     input: CodexUserInput[],
+    clientUserMessageId?: string,
   ): Promise<string> {
     const result = requireObject(
       await this.#request("turn/steer", {
         threadId: requireString(threadId, "thread ID"),
         expectedTurnId: requireString(expectedTurnId, "expected turn ID"),
         input: requireInput(input),
+        ...(clientUserMessageId
+          ? { clientUserMessageId: requireString(clientUserMessageId, "client message ID") }
+          : {}),
       }),
       "turn/steer result",
     );
@@ -258,6 +285,32 @@ export class CodexAppServerClient {
       );
       return;
     }
+    if (typeof message.method === "string" && message.id !== undefined) {
+      // The app-server can request approvals, tool input, token refresh, or
+      // other privileged actions. This small client has no authority/UI for
+      // them, so answer explicitly instead of silently hanging the turn.
+      this.#socket.send(
+        JSON.stringify({
+          id: message.id,
+          error: {
+            code: -32601,
+            message: `After Party does not handle app-server request ${message.method}.`,
+          },
+        }),
+      );
+      const rejected: CodexAppServerNotification = {
+        method: "after-party/server-request-rejected",
+        params: { requestMethod: message.method },
+      };
+      for (const listener of this.#listeners) {
+        try {
+          listener(rejected);
+        } catch {
+          // One observer must not break protocol bookkeeping.
+        }
+      }
+      return;
+    }
     if (typeof message.id === "number") {
       const pending = this.#pending.get(message.id);
       if (!pending) {
@@ -285,19 +338,25 @@ export class CodexAppServerClient {
       method: message.method,
       ...(isObject(message.params) ? { params: message.params } : {}),
     };
-    for (const listener of this.#listeners) {
-      listener(notification);
-    }
     const turnId = terminalTurnId(notification);
-    if (!turnId) {
-      return;
+    if (turnId) {
+      this.#terminal.set(turnId, notification);
+      if (this.#terminal.size > 100) {
+        this.#terminal.delete(this.#terminal.keys().next().value!);
+      }
+      const waiter = this.#terminalWaiters.get(turnId);
+      if (waiter) {
+        this.#terminalWaiters.delete(turnId);
+        clearTimeout(waiter.timer);
+        waiter.resolve(notification);
+      }
     }
-    this.#terminal.set(turnId, notification);
-    const waiter = this.#terminalWaiters.get(turnId);
-    if (waiter) {
-      this.#terminalWaiters.delete(turnId);
-      clearTimeout(waiter.timer);
-      waiter.resolve(notification);
+    for (const listener of this.#listeners) {
+      try {
+        listener(notification);
+      } catch {
+        // One observer must not break terminal bookkeeping or other clients.
+      }
     }
   }
 
@@ -316,6 +375,14 @@ export class CodexAppServerClient {
       waiter.reject(error);
     }
     this.#terminalWaiters.clear();
+    for (const listener of this.#closeListeners) {
+      try {
+        listener(error);
+      } catch {
+        // Connection observers cannot interfere with protocol cleanup.
+      }
+    }
+    this.#closeListeners.clear();
   }
 }
 

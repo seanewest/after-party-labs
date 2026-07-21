@@ -115,9 +115,6 @@ export async function driveMicrosoftRedirect({
     if (/conditional access|you cannot access this right now|sign-in was blocked/i.test(text)) {
       throw new Error(`Microsoft Conditional Access blocked the dedicated operator: ${text}`);
     }
-    const password = page.locator('input[name="passwd"]:visible');
-    if (await visible(password)) throw new Error('Microsoft requested a password instead of the configured operator certificate.');
-
     const account = page.getByText(userPrincipalName, { exact: true }).first();
     if (await visible(account) && /pick an account|choose an account|sign in/i.test(text)) {
       await account.click();
@@ -149,6 +146,8 @@ export async function driveMicrosoftRedirect({
       await wait(500);
       continue;
     }
+    const password = page.locator('input[name="passwd"]:visible');
+    if (await visible(password)) throw new Error('Microsoft requested a password instead of the configured operator certificate.');
     if (/stay signed in/i.test(text) && await clickFirst([
       page.locator('#idBtn_Back').first(),
       page.getByRole('button', { name: /^No$/i }).first(),

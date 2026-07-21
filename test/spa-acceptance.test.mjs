@@ -63,7 +63,7 @@ test('Microsoft steering submits only the dedicated UPN and selects certificate 
     locator(selector) {
       if (selector === 'body') return locator({ innerText: stage === 'username' ? 'Sign in' : stage === 'options' ? 'Sign-in options' : stage === 'choice' ? 'Use a certificate or smart card' : 'Signed in' });
       if (selector === '#auth-status') return locator({ count: stage === 'done' ? 1 : 0 });
-      if (selector === 'input[name="passwd"]:visible') return locator();
+      if (selector === 'input[name="passwd"]:visible') return locator({ isVisible: stage === 'options' });
       if (selector === 'input[name="loginfmt"]:visible') return locator({ isVisible: stage === 'username', fill: (value) => { filled = value; } });
       if (selector === '#idSIButton9, button[type="submit"]') return locator({ click: () => { stage = 'options'; } });
       if (selector.includes('data-value')) return locator();

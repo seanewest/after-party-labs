@@ -418,7 +418,10 @@ test("managed user service install is idempotent and preserves unrelated units",
       run,
     });
     assert.equal(first.active, "active");
-    assert.match(readFileSync(unitPath, "utf8"), /run.*--owner.*seanewest.*--project.*1/);
+    const unit = readFileSync(unitPath, "utf8");
+    assert.match(unit, /run.*--owner.*seanewest.*--project.*1/);
+    assert.match(unit, /WorkingDirectory=\/tmp\/after-party-service-/);
+    assert.match(unit, /Environment="PATH=\/usr\/bin"/);
     installDispatcherService({
       owner: "seanewest", projectNumber: 1, checkout: directory, unitPath, run,
     });

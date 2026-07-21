@@ -143,7 +143,7 @@ export async function driveMicrosoftRedirect({
       await wait(600);
       continue;
     }
-    if (await clickFirst([
+    if (passwordVisible && await clickFirst([
       page.getByText(/sign-in options|sign in another way/i).first(),
       page.locator('#signInAnotherWay').first(),
     ])) {

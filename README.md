@@ -29,3 +29,4 @@ See [Local development](docs/local-development.md) for ports, build behavior, an
 - [Create, verify, or delete the multitenant application](docs/multitenant-application.md)
 - [Tenant runtime bootstrap](docs/tenant-runtime.md)
 - [Tenant operation lock](docs/tenant-lock.md)
+- [Agent-operated SPA acceptance](docs/agent-operated-spa.md)

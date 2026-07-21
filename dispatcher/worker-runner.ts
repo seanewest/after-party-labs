@@ -223,7 +223,17 @@ export class DeliveryCoordinator {
         current?.state === "delivering" &&
         current.leaseOwner === this.#consumer
       ) {
-        this.queue.renewLease(messageId, this.#consumer, this.#leaseMs);
+        try {
+          this.queue.renewLease(messageId, this.#consumer, this.#leaseMs);
+        } catch (error) {
+          const latest = this.queue.getMessage(messageId);
+          if (
+            latest?.state === "delivering" &&
+            latest.leaseOwner === this.#consumer
+          ) {
+            throw error;
+          }
+        }
       }
     }, Math.max(25, Math.floor(this.#leaseMs / 3)));
     interval.unref();

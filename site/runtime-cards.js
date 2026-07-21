@@ -109,6 +109,7 @@ function selectionView(document) {
           ['Region', plan.location],
           ['Required role', plan.authorization.requiredRole],
           ['Commit', plan.deployment.parameters.commit],
+          ['Runtime image', plan.deployment.parameters.apiImage],
           ['Changes', plan.resources.join('; ')],
         ].flatMap(([label, value]) => {
           const term = document.createElement('dt');

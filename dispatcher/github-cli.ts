@@ -6,6 +6,10 @@ import {
   GitHubFeedbackPoller,
   GitHubFeedbackStore,
 } from "./github-feedback.ts";
+import {
+  GitHubContinuationPoller,
+  GitHubContinuationStore,
+} from "./github-continuation.ts";
 import { GhCliGitHubSource } from "./github-source.ts";
 import { defaultDispatcherDatabasePath } from "./paths.ts";
 import { DispatcherQueue } from "./queue.ts";
@@ -30,6 +34,7 @@ export async function runGitHubPollerCli(
   const options = parseOptions(argv);
   const queue = new DispatcherQueue(options.databasePath);
   const store = new GitHubFeedbackStore(options.databasePath);
+  const continuationStore = new GitHubContinuationStore(options.databasePath);
   try {
     const source = new GhCliGitHubSource({
       owner: options.owner,
@@ -40,18 +45,28 @@ export async function runGitHubPollerCli(
       maxPages: options.maxPages,
       reviewCycleThreshold: options.reviewCycleThreshold,
     });
-    const result = await poller.poll();
+    const feedback = await poller.poll();
+    const continuations = await new GitHubContinuationPoller(
+      source,
+      continuationStore,
+      queue,
+    ).poll();
+    const result = { ...feedback, continuations };
     if (options.json) {
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     } else {
       process.stdout.write(
-        `GitHub poll complete: ${result.recorded} recorded, ${result.queued} queued, ` +
-          `${result.ignored} ignored, ${result.escalated} escalated, ` +
-          `${result.sourceFailures} source failures.\n`,
+        `GitHub poll complete: feedback ${feedback.recorded} recorded, ` +
+          `${feedback.queued} queued, ${feedback.ignored} ignored, ` +
+          `${feedback.escalated} escalated; continuations ${continuations.inspected} inspected, ` +
+          `${continuations.queued} queued, ${continuations.pending} pending, ` +
+          `${continuations.failed} failed, ${continuations.escalated} escalated; ` +
+          `${feedback.sourceFailures + continuations.sourceFailures} source failures.\n`,
       );
     }
-    return result.sourceFailures === 0 ? 0 : 2;
+    return feedback.sourceFailures + continuations.sourceFailures === 0 ? 0 : 2;
   } finally {
+    continuationStore.close();
     store.close();
     queue.close();
   }
@@ -122,9 +137,9 @@ function integerOption(
 
 const helpText = `Usage: party-github-poller --owner LOGIN --project NUMBER [options]
 
-Runs one bounded polling pass over active board Tasks and their linked pull
-requests. Invoke it again on a schedule; durable SQLite checkpoints and source
-IDs make restart and overlapping passes safe.
+Runs one bounded polling pass over active board Tasks, their linked pull
+requests, and registered one-shot continuations. Invoke it again on a schedule;
+durable SQLite state and source IDs make restart and overlapping passes safe.
 
 Options:
   --database PATH                 Override the dispatcher SQLite path.

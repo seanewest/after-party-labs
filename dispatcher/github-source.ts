@@ -10,6 +10,11 @@ import {
   type GitHubFeedbackSource,
   type PullRequestRoute,
 } from "./github-feedback.ts";
+import type {
+  GitHubContinuationSource,
+  PullRequestCheck,
+  PullRequestTransitionState,
+} from "./github-continuation.ts";
 import { isAgentName, type AgentName } from "./registry.ts";
 
 const execFileAsync = promisify(execFile);
@@ -28,7 +33,9 @@ export interface GhCliGitHubSourceOptions {
 
 type JsonObject = Record<string, unknown>;
 
-export class GhCliGitHubSource implements GitHubFeedbackSource {
+export class GhCliGitHubSource
+  implements GitHubFeedbackSource, GitHubContinuationSource
+{
   #owner: string;
   #projectNumber: number;
   #run: GhCommandRunner;
@@ -156,6 +163,40 @@ export class GhCliGitHubSource implements GitHubFeedbackSource {
     };
   }
 
+  async getPullRequestTransitionState(
+    repository: string,
+    pullRequestNumber: number,
+  ): Promise<PullRequestTransitionState> {
+    const targetRepository = repositoryName(repository);
+    const targetNumber = positiveInteger(
+      pullRequestNumber,
+      "pull request number",
+    );
+    const output = await this.#runWithRetry([
+      "pr",
+      "view",
+      String(targetNumber),
+      "--repo",
+      targetRepository,
+      "--json",
+      "headRefOid,state,mergedAt,statusCheckRollup,url",
+    ]);
+    const document = parseObject(output, "pull request transition state");
+    const state = requiredString(document.state, "pull request state").toUpperCase();
+    return {
+      repository: targetRepository,
+      pullRequestNumber: targetNumber,
+      url: requiredString(document.url, "pull request URL"),
+      head: requiredString(document.headRefOid, "pull request head"),
+      open: state === "OPEN",
+      merged: state === "MERGED" || optionalString(document.mergedAt) !== null,
+      checks: arrayValue(
+        document.statusCheckRollup,
+        "pull request check rollup",
+      ).map(normalizeCheck),
+    };
+  }
+
   async #runWithRetry(arguments_: string[]): Promise<string> {
     let lastError: unknown;
     for (let attempt = 1; attempt <= this.#maxAttempts; attempt += 1) {
@@ -171,6 +212,32 @@ export class GhCliGitHubSource implements GitHubFeedbackSource {
     }
     throw lastError;
   }
+}
+
+function normalizeCheck(value: unknown): PullRequestCheck {
+  const check = objectValue(value, "pull request check");
+  const typeName = optionalString(check.__typename);
+  if (typeName === "CheckRun" || check.status !== undefined) {
+    const status = requiredString(check.status, "check run status").toUpperCase();
+    return {
+      name:
+        optionalString(check.name) ??
+        optionalString(check.workflowName) ??
+        "unnamed check run",
+      completed: status === "COMPLETED",
+      result: optionalString(check.conclusion)?.toUpperCase() ?? null,
+    };
+  }
+
+  const state = requiredString(check.state, "status context state").toUpperCase();
+  return {
+    name:
+      optionalString(check.context) ??
+      optionalString(check.name) ??
+      "unnamed status context",
+    completed: ["SUCCESS", "FAILURE", "ERROR"].includes(state),
+    result: state,
+  };
 }
 
 export async function runGh(arguments_: string[]): Promise<string> {
@@ -247,6 +314,14 @@ function parsePullRequestUrl(
     repository: match[1],
     number: Number(match[2]),
   };
+}
+
+function repositoryName(value: string): string {
+  const normalized = value.trim();
+  if (!/^[^/\s]+\/[^/\s]+$/.test(normalized)) {
+    throw new Error("repository must use the OWNER/REPOSITORY form.");
+  }
+  return normalized;
 }
 
 function fieldValue(item: JsonObject, fieldName: string): unknown {

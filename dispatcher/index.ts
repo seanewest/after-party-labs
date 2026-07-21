@@ -1,5 +1,15 @@
 export { defaultDispatcherDatabasePath } from "./paths.ts";
 export {
+  CodexAppServerClient,
+  CodexAppServerError,
+  validateLocalAppServerEndpoint,
+  type CodexAppServerClientOptions,
+  type CodexAppServerNotification,
+  type CodexUserInput,
+  type StartedThread,
+  type StartedTurn,
+} from "./app-server-client.ts";
+export {
   extractSignedAgent,
   feedbackSourceKey,
   GITHUB_FEEDBACK_KINDS,
@@ -93,6 +103,11 @@ export {
   type StartTurnInput,
   type WorkerSessionRecord,
 } from "./session-store.ts";
+export {
+  SharedWorkerDeliveryPrototype,
+  type SharedWorkerPrototypeOptions,
+  type SharedWorkerPrototypeResult,
+} from "./shared-worker-prototype.ts";
 export {
   TerminalRunnerError,
   TmuxWorkerTerminal,

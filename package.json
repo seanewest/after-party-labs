@@ -19,6 +19,7 @@
     "poll:github": "node dispatcher/github-cli.ts",
     "test:dispatcher": "node --test test/dispatcher-*.test.ts",
     "test:dispatcher:real": "PARTY_REAL_CODEX_SMOKE=1 node --test test/dispatcher-real-smoke.test.ts",
+    "test:dispatcher:shared-real": "PARTY_REAL_SHARED_CODEX_SMOKE=1 node --test test/dispatcher-shared-real.test.ts",
     "test": "node --test"
   },
   "dependencies": {

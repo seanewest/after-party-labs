@@ -31,6 +31,7 @@ export interface TmuxWorkerTerminalOptions {
   tmuxArgsPrefix?: string[];
   codexCommand?: string;
   dispatcherDatabasePath?: string;
+  remoteEndpoint?: string;
   submitDelayMs?: number;
   pause?: (milliseconds: number) => void;
 }
@@ -43,6 +44,7 @@ export class TmuxWorkerTerminal implements WorkerTerminal {
   #tmuxArgsPrefix: string[];
   #codexCommand: string;
   #codexArgumentsPrefix: string[];
+  #remoteEndpoint: string | null;
   #submitDelayMs: number;
   #pause: (milliseconds: number) => void;
 
@@ -57,6 +59,7 @@ export class TmuxWorkerTerminal implements WorkerTerminal {
     this.#codexArgumentsPrefix = dispatcherDirectory
       ? ["--add-dir", dispatcherDirectory]
       : [];
+    this.#remoteEndpoint = options.remoteEndpoint?.trim() || null;
     this.#submitDelayMs = options.submitDelayMs ?? 100;
     this.#pause = options.pause ?? pauseThread;
     if (!Number.isSafeInteger(this.#submitDelayMs) || this.#submitDelayMs < 0) {
@@ -109,10 +112,17 @@ export class TmuxWorkerTerminal implements WorkerTerminal {
           ...this.#codexArgumentsPrefix,
           "resume",
           worker.sessionId,
+          ...(this.#remoteEndpoint ? ["--remote", this.#remoteEndpoint] : []),
           "-C",
           worker.worktreePath,
         ]
-      : [this.#codexCommand, ...this.#codexArgumentsPrefix, "-C", worker.worktreePath];
+      : [
+          this.#codexCommand,
+          ...this.#codexArgumentsPrefix,
+          ...(this.#remoteEndpoint ? ["--remote", this.#remoteEndpoint] : []),
+          "-C",
+          worker.worktreePath,
+        ];
     this.#checked(
       [
         ...this.#tmuxArgsPrefix,

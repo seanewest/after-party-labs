@@ -404,6 +404,7 @@ export interface GoalGitHubPollResult {
   duplicates: number;
   skipped: number;
   discoveryFailed: boolean;
+  deferredUntil: number | null;
   failures: Array<{ goal: string; error: string }>;
 }
 
@@ -431,6 +432,7 @@ export class GoalGitHubPoller {
       duplicates: 0,
       skipped: 0,
       discoveryFailed: false,
+      deferredUntil: null,
       failures: [],
     };
     let goals: BoardGoal[];

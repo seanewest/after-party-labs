@@ -174,6 +174,19 @@ the same context; a model turn does not poll or busy-wait. A process, WSL, tmux,
 may stop execution but must not lose the goal, conversation identity, branch, worktree, or pending
 event.
 
+### External waits and continuations
+
+Never hold a model turn open merely for time, CI, quota, deployment, or another
+machine-observable condition. Use productive offline work or a standard alternative interface
+first. If a wait remains, persist a concise checkpoint, register a deterministic timer or event
+continuation, and end the model turn. When no automated wake-up mechanism exists, report the
+blocker once and stop rather than publishing unchanged status repeatedly.
+
+Services persist their retry deadline and use bounded exponential backoff; they do not crash-loop
+or rapidly poll an unavailable dependency. An administrative ordering dependency such as a
+project-field update is eventually consistent and cannot block independent implementation, tests,
+commits, pushes, or REST operations.
+
 ### Planning, branches, and review
 
 The owning context keeps its technical plan internally and updates it as evidence changes. GitHub

@@ -285,16 +285,63 @@ async function runGoalLoop(
   const githubMaxBackoffMs = integerOption(parsed, "github-max-backoff-ms") ??
     300_000;
   boundedGitHubBackoff(1, githubBackoffMs, githubMaxBackoffMs);
-  let consecutiveGitHubFailures = 0;
+  const githubWaitKey = `github-project:${owner}:${projectNumber}`;
   do {
     let nextDelay = interval;
     const store = new GoalContextStore(databasePath);
     try {
-      const source = new GhProjectGoalSource({ owner, projectNumber });
-      const poller = new GoalGitHubPoller(source, store, {
-        provision: (goal) => provisionGoal(goal, store, databasePath, checkout),
-      });
-      const github = await poller.poll();
+      const priorWait = store.getExternalWait(githubWaitKey);
+      const githubPolled = !priorWait || priorWait.nextAttemptAt <= Date.now();
+      const github = githubPolled
+        ? await new GoalGitHubPoller(
+            new GhProjectGoalSource({ owner, projectNumber }),
+            store,
+            { provision: (goal) => provisionGoal(goal, store, databasePath, checkout) },
+          ).poll()
+        : {
+            goals: 0,
+            provisioned: 0,
+            recorded: 0,
+            duplicates: 0,
+            skipped: 0,
+            discoveryFailed: true,
+            deferredUntil: priorWait.nextAttemptAt,
+            failures: [{
+              goal: "project-discovery",
+              error: `deferred after external failure: ${priorWait.lastError}`,
+            }],
+          };
+      const retryableGitHubFailure = github.discoveryFailed ||
+        github.failures.some((failure) => isTransientGitHubFailure(failure.error));
+      if (githubPolled && retryableGitHubFailure) {
+        const failureCount = (priorWait?.failureCount ?? 0) + 1;
+        const backoff = boundedGitHubBackoff(
+          failureCount,
+          githubBackoffMs,
+          githubMaxBackoffMs,
+        );
+        const lastError = github.failures.map((failure) => failure.error).join("; ");
+        const wait = store.recordExternalWait({
+          key: githubWaitKey,
+          failureCount,
+          nextAttemptAt: Date.now() + backoff,
+          lastError,
+        });
+        github.deferredUntil = wait.nextAttemptAt;
+        process.stderr.write(
+          `GitHub polling unavailable; checkpointed retry in ${backoff}ms ` +
+          `(attempt ${failureCount}): ${wait.lastError}\n`,
+        );
+      } else if (githubPolled) {
+        store.clearExternalWait(githubWaitKey);
+      }
+      const activeWait = store.getExternalWait(githubWaitKey);
+      if (activeWait) {
+        nextDelay = Math.min(
+          interval,
+          Math.max(1, activeWait.nextAttemptAt - Date.now()),
+        );
+      }
       const deliveries: Array<{ goal: string; result: Record<string, unknown> }> = [];
       const delivery = new GoalEventDelivery(store, {
         consumer: option(parsed, "consumer"),
@@ -366,23 +413,6 @@ async function runGoalLoop(
         return github.failures.length > 0 || deliveries.some(
           (value) => value.result.outcome === "failed",
         ) ? 1 : 0;
-      }
-      const retryableGitHubFailure = github.discoveryFailed ||
-        github.failures.some((failure) => isTransientGitHubFailure(failure.error));
-      if (retryableGitHubFailure) {
-        consecutiveGitHubFailures += 1;
-        nextDelay = boundedGitHubBackoff(
-          consecutiveGitHubFailures,
-          githubBackoffMs,
-          githubMaxBackoffMs,
-        );
-        process.stderr.write(
-          `GitHub polling unavailable; retrying in ${nextDelay}ms ` +
-          `(attempt ${consecutiveGitHubFailures}): ` +
-          `${github.failures.map((failure) => failure.error).join("; ")}\n`,
-        );
-      } else {
-        consecutiveGitHubFailures = 0;
       }
     } finally {
       store.close();

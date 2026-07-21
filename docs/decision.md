@@ -20,6 +20,11 @@ They do not become board owners or create a separate implementation/review hando
 board uses Backlog, Ready, In Progress, Human Needed, and Done; review and machine-event waits remain
 In Progress. Runtime state remains local and outside Git.
 
+Machine-observable waits are durable continuations rather than live model work. The context first
+uses productive offline work or a standard alternative interface, then checkpoints and ends its
+turn with a deterministic timer or event wake-up. Services persist bounded exponential backoff;
+administrative project-field consistency never blocks independent implementation or publication.
+
 ### Universal sign-in
 
 The official SPA uses one multitenant After Party application registration. Runtime

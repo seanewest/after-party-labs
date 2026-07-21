@@ -66,6 +66,15 @@ runtime events change. Event handling must be durable and idempotent. Busy conte
 events; waiting for a machine-observable event ends the current model turn and the later event
 resumes the same context. Automated delivery must not create a hidden competing Codex client.
 
+External waits are continuations, not live model work. Never keep a model turn alive merely to
+wait for time, CI, quota, deployment, or another machine-observable event. First do productive
+offline work or use a standard alternative interface. Before sleeping, persist one concise
+checkpoint and register a deterministic timer or event continuation, then end the model turn. If
+automated wake-up is unavailable, report the blocker once and stop; never repeatedly announce an
+unchanged state. Long-running services use bounded exponential backoff instead of crash loops or
+rapid external polling. Administrative ordering, including eventual project-field updates, must
+not block independent code, tests, pushes, or other productive work.
+
 During the bootstrap migration, existing named-worker commands are compatibility plumbing only.
 They must not assign new goals or revive the retired ownership workflow. Until the goal-context
 path is implemented and proven, the context owning Goal #34 performs this work directly.

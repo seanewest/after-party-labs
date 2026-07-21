@@ -486,6 +486,13 @@ test("loopback gateway reconnects a thread and accepts text plus image", async (
     const html = await page.text();
     assert.match(html, /After Party goal context/);
     assert.match(html, /Queue follow-up/);
+    const scriptPath = /<script src="([^"]+)"/.exec(html)?.[1];
+    assert.equal(scriptPath, `/contexts/${value.context.id}/client.js`);
+    const script = await fetch(new URL(scriptPath, base));
+    assert.equal(script.status, 200);
+    const clientSource = await script.text();
+    assert.match(clientSource, /new EventSource\(base\+'\/events'\)/);
+    assert.doesNotThrow(() => new Function(clientSource));
     const cookie = page.headers.get("set-cookie")?.split(";")[0];
     assert.ok(cookie);
     const image =

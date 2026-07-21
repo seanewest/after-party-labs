@@ -133,6 +133,12 @@ case "${1:-}:${2:-}:${3:-}" in
       'api.requestedAccessTokenVersion')
         printf '2\n'
         ;;
+      '{signInAudience:signInAudience,spa:spa,web:web,requiredResourceAccess:requiredResourceAccess,identifierUris:identifierUris,api:api,appRoles:appRoles}')
+        printf '%s\n' '{"signInAudience":"AzureADMultipleOrgs","spa":{"redirectUris":["https://example.test/after-party/"]},"web":{},"requiredResourceAccess":[],"identifierUris":["api://old"],"api":{"oauth2PermissionScopes":[{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","value":"Old.Scope"}],"preAuthorizedApplications":[{"appId":"11111111-1111-1111-1111-111111111111","delegatedPermissionIds":["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"]}]},"appRoles":[]}'
+        ;;
+      *'preAuthorizedApplications:`[]`'*)
+        printf '%s\n' '{"signInAudience":"AzureADMultipleOrgs","spa":{"redirectUris":["https://example.test/after-party/"]},"web":{},"requiredResourceAccess":[],"identifierUris":["api://old"],"api":{"oauth2PermissionScopes":[{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","value":"Old.Scope"}],"preAuthorizedApplications":[]},"appRoles":[]}'
+        ;;
       *oauth2PermissionScopes*)
         printf '5c9bfc9c-4f2e-477d-a572-3d7fabe8542d\n'
         ;;
@@ -221,6 +227,13 @@ case "${1:-}:${2:-}:${3:-}" in
     elif [[ " $* " == *' --method DELETE '* ]]; then
       :
     else
+      if [[ " $* " == *' --method PATCH '* && -n "${AZ_MOCK_FAIL_PATCH_NUMBER:-}" ]]; then
+        patch_count="$(grep -c 'rest --method PATCH' "$AZ_MOCK_LOG")"
+        if [[ "$patch_count" == "$AZ_MOCK_FAIL_PATCH_NUMBER" ]]; then
+          echo 'mock PATCH failure' >&2
+          exit 2
+        fi
+      fi
       printf '%s\n' "${AZ_MOCK_APP_ID:-11111111-1111-1111-1111-111111111111}"
     fi
     ;;
@@ -281,6 +294,8 @@ assert_log_contains 'rest --method POST'
 assert_log_contains 'AfterParty.Operate'
 assert_log_contains 'requestedAccessTokenVersion'
 assert_log_contains 'appRoles'
+assert_log_contains 'preAuthorizedApplications\":\[\]'
+assert_log_contains 'preAuthorizedApplications\":\[\{\"appId\"'
 assert_log_excludes 'f2b4a169-9f29-48c3-b0db-8c5efc1b895b'
 assert_log_contains '797f4846-ba00-4fd7-ba43-dac1f8f63013'
 assert_log_contains '41094075-9dad-400e-a0bd-54e686782033'
@@ -355,6 +370,31 @@ assert_log_contains "rest --method PATCH --url https://graph.microsoft.com/v1.0/
 assert_log_excludes 'ad app list --display-name'
 assert_log_excludes 'ad app delete'
 printf 'PASS: create script safely reconciles an exact existing application\n'
+
+: >"$AZ_MOCK_LOG"
+if reconcile_rollback_output="$(
+  env \
+    PATH="$mock_path" \
+    AFTER_PARTY_APP_ID="$app_id" \
+    EXPECTED_TENANT_ID="$tenant_id" \
+    CONFIRM_RECONCILE="$app_id" \
+    SPA_REDIRECT_URI="$redirect_uri" \
+    AZ_MOCK_FAIL_PATCH_NUMBER=3 \
+    bash scripts/create-multitenant-app.sh 2>&1
+)"; then
+  fail 'reconciliation accepted a failed preauthorization PATCH'
+fi
+assert_contains "$reconcile_rollback_output" 'restoring application'
+[[ "$(grep -c 'rest --method PATCH' "$AZ_MOCK_LOG")" == '5' ]] ||
+  fail 'reconciliation did not issue both rollback PATCHes after the forced failure'
+rollback_scope_line="$(grep 'rest --method PATCH' "$AZ_MOCK_LOG" | sed -n '4p')"
+rollback_full_line="$(grep 'rest --method PATCH' "$AZ_MOCK_LOG" | sed -n '5p')"
+assert_contains "$rollback_scope_line" 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+assert_contains "$rollback_scope_line" 'preAuthorizedApplications\":\[\]'
+assert_contains "$rollback_full_line" 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+assert_contains "$rollback_full_line" 'delegatedPermissionIds'
+assert_log_excludes 'ad app delete'
+printf 'PASS: reconciliation restores the application after a partial API update\n'
 
 : >"$AZ_MOCK_LOG"
 if reconcile_unconfirmed_output="$(
